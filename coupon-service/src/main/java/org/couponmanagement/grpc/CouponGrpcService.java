@@ -177,7 +177,7 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
                         .setPayload(CouponServiceProto.ApplyCouponAutoResponsePayload.newBuilder()
                                 .setSuccess(false)
                                 .setOrderAmount(orderAmount.doubleValue())
-                                .setDiscountAmount(result.getDiscountAmount().doubleValue())
+                                .setDiscountAmount(0)
                                 .setFinalAmount(finalAmount.doubleValue())
                                 .build())
                         .build();
@@ -223,11 +223,9 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
                 throw new IllegalArgumentException("Invalid coupon ID");
             }
 
-            // Find existing coupon
             Coupon existingCoupon = couponRepository.findById(request.getCouponId())
                     .orElseThrow(() -> new IllegalArgumentException("Coupon not found"));
 
-            // Update coupon fields
             existingCoupon.setDescription(request.getDescription());
             existingCoupon.setCode(request.getCode());
             existingCoupon.setTitle(request.getTitle());
@@ -235,7 +233,6 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
             existingCoupon.setIsActive(request.getIsActive());
             existingCoupon.setCollectionKeyId(request.getCollectionKeyId());
 
-            // Update discount config if provided
             if (request.hasConfig()) {
                 Map<String, Value> configMap = request.getConfig().getConfigMap();
                 Coupon.DiscountConfig currentConfig = existingCoupon.getDiscountConfig();
@@ -503,6 +500,7 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
                 .setType(coupon.getDiscountType())
                 .setValue(coupon.getDiscountValue() != null ? coupon.getDiscountValue().doubleValue() : 0.0)
                 .setConfig(discountConfigBuilder.build())
+                .setIsActive(coupon.getIsActive())
                 .setStartDate(coupon.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
                 .setEndDate(coupon.getExpiryDate().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
                 .setCreatedAt(coupon.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
@@ -520,16 +518,12 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
                 com.google.protobuf.Value.Builder valueBuilder = com.google.protobuf.Value.newBuilder();
 
                 Object value = entry.getValue();
-                if (value instanceof String) {
-                    valueBuilder.setStringValue((String) value);
-                } else if (value instanceof Number) {
-                    valueBuilder.setNumberValue(((Number) value).doubleValue());
-                } else if (value instanceof Boolean) {
-                    valueBuilder.setBoolValue((Boolean) value);
-                } else if (value == null) {
-                    valueBuilder.setNullValue(NULL_VALUE);
-                } else {
-                    valueBuilder.setStringValue(value.toString());
+                switch (value) {
+                    case String s -> valueBuilder.setStringValue(s);
+                    case Number number -> valueBuilder.setNumberValue(number.doubleValue());
+                    case Boolean b -> valueBuilder.setBoolValue(b);
+                    case null -> valueBuilder.setNullValue(NULL_VALUE);
+                    default -> valueBuilder.setStringValue(value.toString());
                 }
 
                 discountConfigBuilder.putConfig(entry.getKey(), valueBuilder.build());
@@ -542,6 +536,7 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
                 .setDescription(coupon.getDescription() != null ? coupon.getDescription() : "")
                 .setStatus(coupon.getIsActive() ? "ACTIVE" : "INACTIVE")
                 .setType(coupon.getDiscountType())
+                .setIsActive(coupon.getIsActive())
                 .setConfig(discountConfigBuilder.build())
                 .setStartDate(coupon.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
                 .setEndDate(coupon.getExpiryDate().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
@@ -558,21 +553,16 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
                 TypeReference<Map<String, Object>> typeRef = new TypeReference<Map<String, Object>>() {};
                 Map<String, Object> configMap = objectMapper.readValue(couponDetail.getDiscountConfigJson(), typeRef);
 
-                // Convert Map<String, Object> to Map<String, google.protobuf.Value>
                 for (Map.Entry<String, Object> entry : configMap.entrySet()) {
                     com.google.protobuf.Value.Builder valueBuilder = com.google.protobuf.Value.newBuilder();
 
                     Object value = entry.getValue();
-                    if (value instanceof String) {
-                        valueBuilder.setStringValue((String) value);
-                    } else if (value instanceof Number) {
-                        valueBuilder.setNumberValue(((Number) value).doubleValue());
-                    } else if (value instanceof Boolean) {
-                        valueBuilder.setBoolValue((Boolean) value);
-                    } else if (value == null) {
-                        valueBuilder.setNullValue(NULL_VALUE);
-                    } else {
-                        valueBuilder.setStringValue(value.toString());
+                    switch (value) {
+                        case String s -> valueBuilder.setStringValue(s);
+                        case Number number -> valueBuilder.setNumberValue(number.doubleValue());
+                        case Boolean b -> valueBuilder.setBoolValue(b);
+                        case null -> valueBuilder.setNullValue(NULL_VALUE);
+                        default -> valueBuilder.setStringValue(value.toString());
                     }
 
                     discountConfigBuilder.putConfig(entry.getKey(), valueBuilder.build());
@@ -588,6 +578,7 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
                 .setDescription(couponDetail.getDescription() != null ? couponDetail.getDescription() : "")
                 .setStatus(couponDetail.getStatus())
                 .setType(couponDetail.getType())
+                .setIsActive(couponDetail.isActive())
                 .setConfig(discountConfigBuilder.build())
                 .setStartDate(couponDetail.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
                 .setEndDate(couponDetail.getExpiryDate().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))

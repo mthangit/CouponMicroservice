@@ -110,8 +110,9 @@ message UpdateCouponResponsePayload {
     int32 collection_key_id = 9;
     string start_date = 10;
     string end_date = 11;
-    string created_at = 12;
-    string updated_at = 13;
+    bool is_active = 12;
+    string created_at = 13;
+    string updated_at = 14;
 }
 
 message UpdateCouponResponse {
@@ -144,8 +145,9 @@ message CouponSummary {
     string type = 5;
     DiscountConfig config = 6;
     int32 collection_key_id = 7;
-    string start_date = 8;
-    string end_date = 9;
+    bool is_active = 8;
+    string start_date = 9;
+    string end_date = 10;
 }
 
 message ListCouponsResponsePayload {

@@ -19,19 +19,11 @@ public class AuthController {
     
     private final JwtService jwtService;
     
-    /**
-     * Generate JWT token for testing purposes
-     * POST /api/v1/auth/login
-     */
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
         log.info("Login request for user: {}", request.getUsername());
         
         try {
-            // In production, you would validate credentials against a database
-            // For demo purposes, we'll accept any credentials and generate a token
-            
-            // Mock user validation
             Integer userId = getUserIdByUsername(request.getUsername());
             String userRole = getUserRole(request.getUsername());
 
@@ -40,7 +32,6 @@ public class AuthController {
                         .body(LoginResponse.failure("Invalid username or password"));
             }
 
-            // Generate JWT token with role
             String token = jwtService.generateToken(userId, request.getUsername(), userRole);
             
             log.info("Successfully generated token for user: {} (ID: {})", request.getUsername(), userId);
@@ -118,25 +109,18 @@ public class AuthController {
         }
     }
     
-    /**
-     * Mock user database - in production this would be a real database lookup
-     */
     private Integer getUserIdByUsername(String username) {
-        // Mock users for testing
         return switch (username.toLowerCase()) {
-            case "user1", "john", "test1" -> 1001;
-            case "user2", "jane", "test2" -> 1002;
-            case "user3", "test3" -> 1003;
+            case "user1", "john", "test1" -> 1;
+            case "user2", "jane", "test2" -> 2;
+            case "user3", "test3" -> 3;
             case "admin", "administrator" -> 9001; // Admin users
-            case "demo", "demo1" -> 1004;
-            case "test", "testuser" -> 1005;
+            case "demo", "demo1" -> 4;
+            case "test", "testuser" -> 5;
             default -> null;
         };
     }
 
-    /**
-     * Get user role by username - in production this would be from database
-     */
     private String getUserRole(String username) {
         return switch (username.toLowerCase()) {
             case "admin", "administrator" -> "ADMIN";

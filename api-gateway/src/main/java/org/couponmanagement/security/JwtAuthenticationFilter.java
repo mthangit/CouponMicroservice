@@ -136,9 +136,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         return userId instanceof Integer ? (Integer) userId : null;
     }
     
-    /**
-     * Get authenticated user info from request
-     */
     public static JwtService.UserInfo getAuthenticatedUserInfo(HttpServletRequest request) {
         Object userInfo = request.getAttribute("userInfo");
         return userInfo instanceof JwtService.UserInfo ? (JwtService.UserInfo) userInfo : null;

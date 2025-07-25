@@ -26,8 +26,8 @@ public class OrderGrpcService extends OrderServiceGrpc.OrderServiceImplBase {
     public void processOrder(OrderServiceProto.ProcessOrderRequest request,
                            StreamObserver<OrderServiceProto.ProcessOrderResponse> responseObserver) {
         
-        log.info("Received processOrder gRPC request: userId={}, amount={}, couponCode={}", 
-                request.getUserId(), request.getOrderAmount(), request.getCouponCode());
+        log.info("Received processOrder gRPC request: userId={}, amount={}, couponCode={}, orderDate={}",
+                request.getUserId(), request.getOrderAmount(), request.getCouponCode(), request.getOrderDate());
 
         try {
             validator.validateUserId(request.getUserId());

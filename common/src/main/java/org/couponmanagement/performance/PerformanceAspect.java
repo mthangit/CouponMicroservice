@@ -56,7 +56,6 @@ public class PerformanceAspect {
             long memoryUsed = Math.max(0, endMemory - startMemory);
             double cpuUsagePercent = calculateCpuUsage(startCpuTime, endCpuTime, executionTime);
 
-            // Record metrics to Prometheus only
             metricsRegistry.recordExecutionTime(methodName, className, executionTime, success);
             metricsRegistry.incrementMethodCalls(methodName, className, success);
 

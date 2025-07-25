@@ -10,10 +10,6 @@ import javax.crypto.SecretKey;
 import java.util.Date;
 import java.util.function.Function;
 
-/**
- * JWT Service for token validation and user extraction
- * Handles JWT parsing, validation, and user ID extraction
- */
 @Service
 @Slf4j
 public class JwtService {
@@ -142,16 +138,10 @@ public class JwtService {
         }
     }
     
-    /**
-     * Generate JWT token for testing purposes
-     */
     public String generateToken(Integer userId, String username) {
         return generateToken(userId, username, "USER");
     }
 
-    /**
-     * Generate JWT token with role
-     */
     public String generateToken(Integer userId, String username, String role) {
         return Jwts.builder()
                 .subject(username)

@@ -293,7 +293,6 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
             ruleCollection = collections.stream().filter(rc -> rc.getRuleIdsList().contains(rule.getId())).findFirst().orElse(null);
 
             if (ruleCollection != null) {
-                // Update RuleCollectionWithRulesCacheInfo in cache
                 Integer collectionId = ruleCollection.getId();
                 var cachedOpt = ruleCacheService.getCachedRuleCollectionWithRules(collectionId);
                 RuleCacheService.RuleCollectionWithRulesCacheInfo cacheInfo = cachedOpt.orElseGet(() ->
@@ -301,7 +300,6 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                 );
                 List<RuleCacheService.RuleConfigCacheInfo> rules = cacheInfo.getRules();
                 if (rules == null) rules = new ArrayList<>();
-                // Remove old rule if exists
                 rules.removeIf(r -> r.getRuleId().equals(rule.getId()));
                 if (Boolean.TRUE.equals(rule.getIsActive())) {
                     // Add updated rule if still active

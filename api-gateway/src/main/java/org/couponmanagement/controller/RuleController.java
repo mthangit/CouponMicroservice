@@ -1,7 +1,12 @@
 package org.couponmanagement.controller;
 
 import jakarta.validation.Valid;
+import org.couponmanagement.dto.ModifyRuleCollectionRequest;
+import org.couponmanagement.dto.response.ErrorResponse;
+import org.couponmanagement.dto.response.ApiResponse;
+import org.couponmanagement.dto.response.RuleCollectionDTO;
 import org.couponmanagement.grpc.RuleServiceClient;
+import org.couponmanagement.grpc.annotation.PerformanceMonitor;
 import org.couponmanagement.rule.*;
 import org.couponmanagement.security.RequireAdmin;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,29 +22,6 @@ public class RuleController {
 
     @Autowired
     private RuleServiceClient ruleServiceClient;
-
-    @PostMapping("/evaluate")
-    public ResponseEntity<?> evaluateRules(@Valid @RequestBody RuleServiceProto.EvaluateRuleRequest request) {
-        try {
-            log.info("Evaluate rules: user={}", request.getUserId());
-
-            RuleServiceProto.EvaluateRuleRequest.Builder requestBuilder = request.toBuilder();
-            if (request.getRequestId().isEmpty()) {
-                requestBuilder.setRequestId(UUID.randomUUID().toString());
-            }
-
-            RuleServiceProto.EvaluateRuleResponse response = ruleServiceClient.evaluateRuleCollections(requestBuilder.build());
-
-            if (response.getStatus().getCode() == RuleServiceProto.StatusCode.OK) {
-                return ResponseEntity.ok(response.getPayload());
-            } else {
-                return ResponseEntity.badRequest().body(response.getError());
-            }
-        } catch (Exception e) {
-            log.error("Error in evaluate rules: {}", e.getMessage(), e);
-            return ResponseEntity.internalServerError().body("Internal server error");
-        }
-    }
 
     @GetMapping("/collections/{collectionId}")
     @RequireAdmin
@@ -123,6 +105,7 @@ public class RuleController {
 
     @GetMapping("/collections")
     @RequireAdmin
+    @PerformanceMonitor
     public ResponseEntity<?> listRuleCollections(
             @RequestParam(name = "page", defaultValue = "0") int page,
             @RequestParam(name = "size",defaultValue = "10") int size,
@@ -138,9 +121,10 @@ public class RuleController {
             }
             RuleServiceProto.ListRuleCollectionsResponse response = ruleServiceClient.listRuleCollections(requestBuilder.build());
             if (response.getStatus().getCode() == RuleServiceProto.StatusCode.OK) {
-                return ResponseEntity.ok(response.getPayload());
+                RuleCollectionDTO.ListRuleCollectionsDto dto = RuleCollectionDTO.ListRuleCollectionsDto.fromProto(response.getPayload());
+                return ResponseEntity.ok(ApiResponse.success(dto));
             } else {
-                return ResponseEntity.badRequest().body(response.getError());
+                return ResponseEntity.badRequest().body(ApiResponse.error(response.getStatus().getMessage(), response.getStatus().getCode().name()));
             }
         } catch (Exception e) {
             log.error("Error in list rule collections: {}", e.getMessage(), e);
@@ -150,22 +134,56 @@ public class RuleController {
 
     @PutMapping("/collections")
     @RequireAdmin
-    public ResponseEntity<?> modifyRuleCollection(@Valid @RequestBody RuleServiceProto.ModifyRuleCollectionRequest request) {
+    public ResponseEntity<?> modifyRuleCollection(@Valid @RequestBody ModifyRuleCollectionRequest request) {
         try {
-            log.info("Modify rule collection: ids={}", request.getCollectionId());
-            RuleServiceProto.ModifyRuleCollectionRequest.Builder requestBuilder = request.toBuilder();
-            if (request.getRequestId().isEmpty()) {
-                requestBuilder.setRequestId(UUID.randomUUID().toString());
+            log.info("Modify rule collection: id={}", request.getCollectionId());
+
+            // Convert DTO to protobuf
+            RuleServiceProto.ModifyRuleCollectionRequest.Builder protoRequestBuilder =
+                RuleServiceProto.ModifyRuleCollectionRequest.newBuilder()
+                    .setCollectionId(request.getCollectionId());
+
+            if (request.getRequestId() != null && !request.getRequestId().trim().isEmpty()) {
+                protoRequestBuilder.setRequestId(request.getRequestId());
+            } else {
+                protoRequestBuilder.setRequestId(UUID.randomUUID().toString());
             }
-            RuleServiceProto.ModifyRuleCollectionResponse response = ruleServiceClient.modifyRuleCollection(requestBuilder.build());
+
+            if (request.getName() != null && !request.getName().trim().isEmpty()) {
+                protoRequestBuilder.setName(request.getName());
+            }
+
+            if (request.getDescription() != null && !request.getDescription().trim().isEmpty()) {
+                protoRequestBuilder.setDescription(request.getDescription());
+            }
+
+            if (request.getIsActive() != null) {
+                protoRequestBuilder.setIsActive(request.getIsActive());
+            }
+
+            RuleServiceProto.ModifyRuleCollectionResponse response = ruleServiceClient.modifyRuleCollection(protoRequestBuilder.build());
+
             if (response.getStatus().getCode() == RuleServiceProto.StatusCode.OK) {
                 return ResponseEntity.ok(response.getPayload());
             } else {
-                return ResponseEntity.badRequest().body(response.getError());
+                // Convert protobuf error to DTO
+                ErrorResponse errorResponse = ErrorResponse.builder()
+                        .code(response.getError().getCode())
+                        .message(response.getError().getMessage())
+                        .details(response.getError().getDetailsMap())
+                        .build();
+
+                return ResponseEntity.badRequest().body(errorResponse);
             }
         } catch (Exception e) {
             log.error("Error in modify rule collection: {}", e.getMessage(), e);
-            return ResponseEntity.internalServerError().body("Internal server error");
+
+            ErrorResponse errorResponse = ErrorResponse.builder()
+                    .code("INTERNAL_ERROR")
+                    .message("Internal server error")
+                    .build();
+
+            return ResponseEntity.internalServerError().body(errorResponse);
         }
     }
 }

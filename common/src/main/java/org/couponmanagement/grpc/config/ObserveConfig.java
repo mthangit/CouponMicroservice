@@ -6,6 +6,7 @@ import io.micrometer.observation.ObservationRegistry;
 import io.micrometer.observation.aop.ObservedAspect;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 @Configuration
 public class ObserveConfig {
@@ -20,6 +21,7 @@ public class ObserveConfig {
     }
 
     @Bean
+    @Primary
     public ObservationGrpcClientInterceptor clientInterceptor(ObservationRegistry observationRegistry) {
         return new ObservationGrpcClientInterceptor(observationRegistry);
     }
