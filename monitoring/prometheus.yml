@@ -1,0 +1,65 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+   API Gateway metrics
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+        labels:
+          service: api-gateway
+    metrics_path: '/actuator/prometheus'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    params:
+      format: ['prometheus']
+
+  # Order Service metrics
+  - job_name: 'order-service'
+    static_configs:
+      - targets: ['host.docker.internal:8093']  # Updated port
+        labels:
+          service: order-service
+    metrics_path: '/actuator/prometheus'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Coupon Service metrics
+  - job_name: 'coupon-service'
+    static_configs:
+      - targets: ['host.docker.internal:8092']  # Updated port
+        labels:
+          service: coupon-service
+    metrics_path: '/actuator/prometheus'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Rule Service metrics
+  - job_name: 'rule-service'
+    static_configs:
+      - targets: ['host.docker.internal:8091']  # Updated port
+        labels:
+          service: rule-service
+    metrics_path: '/actuator/prometheus'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['localhost:9100']
+    scrape_interval: 15s
+
+  - job_name: 'mysql'
+    static_configs:
+      - targets:
+          - mysql-exporter-order-service:9104
+          - mysql-exporter-coupon-service:9104
+          - mysql-exporter-rule-service:9104
+
+  - job_name: 'redis'
+    static_configs:
+      - targets:
+          - redis-exporter-order-service:9121
+          - redis-exporter-coupon-service:9121
+          - redis-exporter-rule-service:9121

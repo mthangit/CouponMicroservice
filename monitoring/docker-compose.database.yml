@@ -1,0 +1,89 @@
+
+services:
+  order_mysql:
+    image: mysql:8.0
+    container_name: order_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: order_db
+      MYSQL_USER: order
+      MYSQL_PASSWORD: 123456
+    ports:
+      - "3306:3306"
+    volumes:
+      - order_mysql_data:/var/lib/mysql
+    networks:
+      - app_network
+
+  coupon_mysql:
+    image: mysql:8.0
+    container_name: coupon_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: coupon_db
+      MYSQL_USER: coupon
+      MYSQL_PASSWORD: 123456
+    ports:
+      - "3307:3306"
+    volumes:
+      - coupon_mysql_data:/var/lib/mysql
+    networks:
+      - app_network
+
+  rule_mysql:
+    image: mysql:8.0
+    container_name: rule_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: rule_db
+      MYSQL_USER: rule
+      MYSQL_PASSWORD: 123456
+    ports:
+      - "3308:3306"
+    volumes:
+      - rule_mysql_data:/var/lib/mysql
+    networks:
+      - app_network
+
+  order_redis:
+    image: redis:7.2
+    container_name: order_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - order_redis_data:/data
+    networks:
+      - app_network
+
+  coupon_redis:
+    image: redis:7.2
+    container_name: coupon_redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - coupon_redis_data:/data
+    networks:
+      - app_network
+
+  rule_redis:
+    image: redis:7.2
+    container_name: rule_redis
+    ports:
+      - "6381:6379"
+    volumes:
+      - rule_redis_data:/data
+    networks:
+      - app_network
+
+volumes:
+  order_mysql_data:
+  coupon_mysql_data:
+  rule_mysql_data:
+  order_redis_data:
+  coupon_redis_data:
+  rule_redis_data:
+
+networks:
+  app_network:
+    driver: bridge
+    external: true

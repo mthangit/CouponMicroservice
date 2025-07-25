@@ -1,0 +1,192 @@
+syntax = "proto3";
+
+package org.couponmanagement.coupon;
+import "google/protobuf/struct.proto";
+
+option java_package = "org.couponmanagement.coupon";
+option java_outer_classname = "CouponServiceProto";
+
+enum StatusCode {
+    UNKNOWN = 0;
+    OK = 1;
+    INVALID_ARGUMENT = 2;
+    NOT_FOUND = 3;
+    INTERNAL = 4;
+    UNAUTHENTICATED = 5;
+    PERMISSION_DENIED = 6;
+}
+
+message Status {
+    StatusCode code = 1;
+    string message = 2;
+}
+
+message Error {
+    string code = 1;
+    string message = 2;
+    map<string, string> details = 3;
+}
+
+
+service CouponService {
+    rpc ApplyCouponManual(ApplyCouponManualRequest) returns (ApplyCouponManualResponse);
+    rpc ApplyCouponAuto(ApplyCouponAutoRequest) returns (ApplyCouponAutoResponse);
+    rpc UpdateCoupon(UpdateCouponRequest) returns (UpdateCouponResponse);
+    rpc GetCouponDetails(GetCouponDetailsRequest) returns (GetCouponDetailsResponse);
+    rpc ListCoupons(ListCouponsRequest) returns (ListCouponsResponse);
+    rpc GetUserCoupons(GetUserCouponsRequest) returns (GetUserCouponsResponse);
+}
+
+message ApplyCouponManualRequest {
+    int32 user_id = 1;
+    string coupon_code = 2;
+    double order_amount = 3;
+    string order_date = 4;
+}
+
+message ApplyCouponManualResponsePayload {
+    bool success = 1;
+    string coupon_code = 2;
+    double order_amount = 3;
+    double discount_amount = 4;
+    double final_amount = 5;
+    string error_message = 6;
+    int32 coupon_id = 7;
+}
+
+message ApplyCouponManualResponse {
+    Status status = 1;
+    ApplyCouponManualResponsePayload payload = 2;
+    Error error = 3;
+}
+
+message ApplyCouponAutoRequest {
+    int32 user_id = 1;
+    double order_amount = 2;
+    string order_date = 3;
+}
+
+message ApplyCouponAutoResponsePayload {
+    bool success = 1;
+    string coupon_code = 2;
+    int32 coupon_id = 9;
+    double order_amount = 3;
+    double discount_amount = 4;
+    double final_amount = 5;
+    string error_message = 6;
+}
+
+message ApplyCouponAutoResponse {
+    Status status = 1;
+    ApplyCouponAutoResponsePayload payload = 2;
+    Error error = 3;
+}
+
+message DiscountConfig {
+    map<string, google.protobuf.Value> config = 1;
+}
+
+message UpdateCouponRequest {
+    int32 coupon_id = 1;
+    string code = 2;
+    string title = 3;
+    string description = 4;
+    bool is_active = 5;
+    DiscountConfig config = 6;
+    int32 collection_key_id = 7;
+    string start_date = 8;
+    string end_date = 9;
+}
+
+message UpdateCouponResponsePayload {
+    int32 coupon_id = 1;
+    string code = 2;
+    string title = 3;
+    string description = 4;
+    string status = 5;
+    string type = 6;
+    double value = 7;
+    DiscountConfig config = 8;
+    int32 collection_key_id = 9;
+    string start_date = 10;
+    string end_date = 11;
+    string created_at = 12;
+    string updated_at = 13;
+}
+
+message UpdateCouponResponse {
+    Status status = 1;
+    UpdateCouponResponsePayload payload = 2;
+    Error error = 3;
+}
+
+message GetCouponDetailsRequest {
+    int32 coupon_id = 1;
+}
+
+message GetCouponDetailsResponse {
+    Status status = 1;
+    UpdateCouponResponsePayload payload = 2;
+    Error error = 3;
+}
+
+message ListCouponsRequest {
+    int32 page = 1;
+    int32 size = 2;
+    string status = 3;
+}
+
+message CouponSummary {
+    int32 coupon_id = 1;
+    string code = 2;
+    string description = 3;
+    string status = 4;
+    string type = 5;
+    DiscountConfig config = 6;
+    int32 collection_key_id = 7;
+    string start_date = 8;
+    string end_date = 9;
+}
+
+message ListCouponsResponsePayload {
+    repeated CouponSummary coupons = 1;
+    int64 total_count = 2;
+    int32 page = 3;
+    int32 size = 4;
+}
+
+message ListCouponsResponse {
+    Status status = 1;
+    ListCouponsResponsePayload payload = 2;
+    Error error = 3;
+}
+
+message GetUserCouponsRequest {
+    int32 user_id = 1;
+    int32 page = 2;
+    int32 size = 3;
+}
+
+message UserCouponSummary {
+    int32 coupon_id = 1;
+    string coupon_code = 2;
+    string description = 3;
+    string status = 4;
+    string type = 5;
+    double value = 6;
+    string start_date = 7;
+    string end_date = 8;
+}
+
+message GetUserCouponsResponsePayload {
+    repeated UserCouponSummary user_coupons = 1;
+    int64 total_count = 2;
+    int32 page = 3;
+    int32 size = 4;
+}
+
+message GetUserCouponsResponse {
+    Status status = 1;
+    GetUserCouponsResponsePayload payload = 2;
+    Error error = 3;
+}

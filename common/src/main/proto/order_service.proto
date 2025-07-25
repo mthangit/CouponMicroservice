@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package org.couponmanagement.order;
+
+option java_package = "org.couponmanagement.order";
+option java_outer_classname = "OrderServiceProto";
+
+enum StatusCode {
+    UNKNOWN = 0;
+    OK = 1;
+    INVALID_ARGUMENT = 2;
+    NOT_FOUND = 3;
+    INTERNAL = 4;
+    UNAUTHENTICATED = 5;
+    PERMISSION_DENIED = 6;
+}
+
+message Status {
+    StatusCode code = 1; // Ví dụ: "OK", "INVALID_ARGUMENT", "INTERNAL", v.v.
+    string message = 2; // Mô tả trạng thái
+}
+
+message Error {
+    string code = 1;
+    string message = 2;
+    map<string, string> details = 3;
+}
+
+
+service OrderService {
+    rpc ProcessOrder(ProcessOrderRequest) returns (ProcessOrderResponse);
+}
+
+message ProcessOrderRequest {
+    int32 user_id = 1;
+    double order_amount = 2;
+    string coupon_code = 3;
+    string request_id = 4;
+    string order_date = 5;
+}
+
+message ProcessOrderResponse {
+    Status status = 1;
+    ProcessOrderPayload payload = 2;
+    Error error = 3;
+}
+
+message ProcessOrderPayload {
+    int32 order_id = 1;
+    int32 user_id = 2;
+    double order_amount = 3;
+    double discount_amount = 4;
+    double final_amount = 5;
+    string coupon_code = 6;
+    int32 coupon_id = 7;
+    string order_date = 8;
+    string status = 9;
+}
