@@ -139,7 +139,7 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
             validator.validateUserId(request.getUserId());
             validator.validateOrderAmount(request.getOrderAmount());
 
-            CouponApplicationResult result = couponService.applyCouponAuto(
+            CouponApplicationResult result = couponService.applyCouponAutoParallelSync(
                     request.getUserId(), 
                     BigDecimal.valueOf(request.getOrderAmount()),
                     parseOrderDateTime(request.getOrderDate()));

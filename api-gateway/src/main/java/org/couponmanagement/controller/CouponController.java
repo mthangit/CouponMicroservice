@@ -4,8 +4,9 @@ import org.couponmanagement.dto.ApplyCouponRequest;
 import org.couponmanagement.dto.AutoApplyCouponRequest;
 import org.couponmanagement.dto.UpdateCouponRequest;
 import org.couponmanagement.dto.response.ApplyCouponResponse;
-import org.couponmanagement.dto.response.CouponDetailsResponse;
 import org.couponmanagement.dto.response.ErrorResponse;
+import org.couponmanagement.dto.response.GetUserCouponsResponse;
+import org.couponmanagement.dto.response.UserCouponResponse;
 import org.couponmanagement.grpc.CouponServiceClient;
 import org.couponmanagement.coupon.*;
 import org.couponmanagement.security.RequireAdmin;
@@ -247,7 +248,26 @@ public class CouponController {
             CouponServiceProto.GetUserCouponsResponse response = couponServiceClient.getUserCoupons(request);
 
             if (response.getStatus().getCode() == CouponServiceProto.StatusCode.OK) {
-                return ResponseEntity.ok(response.getPayload());
+                // Convert protobuf response to DTO
+                GetUserCouponsResponse userCouponsResponse = GetUserCouponsResponse.builder()
+                        .userCoupons(response.getPayload().getUserCouponsList().stream()
+                                .map(protoCoupon -> UserCouponResponse.builder()
+                                        .couponId(protoCoupon.getCouponId())
+                                        .couponCode(protoCoupon.getCouponCode())
+                                        .description(protoCoupon.getDescription())
+                                        .status(protoCoupon.getStatus())
+                                        .type(protoCoupon.getType())
+                                        .value(protoCoupon.getValue())
+                                        .startDate(protoCoupon.getStartDate())
+                                        .endDate(protoCoupon.getEndDate())
+                                        .build())
+                                .toList())
+                        .totalCount(response.getPayload().getTotalCount())
+                        .page(response.getPayload().getPage())
+                        .size(response.getPayload().getSize())
+                        .build();
+
+                return ResponseEntity.ok(userCouponsResponse);
             } else {
                 // Convert protobuf error to DTO
                 ErrorResponse errorResponse = ErrorResponse.builder()
