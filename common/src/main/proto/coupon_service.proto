@@ -32,9 +32,9 @@ service CouponService {
     rpc ApplyCouponManual(ApplyCouponManualRequest) returns (ApplyCouponManualResponse);
     rpc ApplyCouponAuto(ApplyCouponAutoRequest) returns (ApplyCouponAutoResponse);
     rpc UpdateCoupon(UpdateCouponRequest) returns (UpdateCouponResponse);
-    rpc GetCouponDetails(GetCouponDetailsRequest) returns (GetCouponDetailsResponse);
     rpc ListCoupons(ListCouponsRequest) returns (ListCouponsResponse);
     rpc GetUserCoupons(GetUserCouponsRequest) returns (GetUserCouponsResponse);
+    rpc RollbackCouponUsage(RollbackCouponUsageRequest) returns (RollbackCouponUsageResponse);
 }
 
 message ApplyCouponManualRequest {
@@ -140,14 +140,15 @@ message ListCouponsRequest {
 message CouponSummary {
     int32 coupon_id = 1;
     string code = 2;
-    string description = 3;
-    string status = 4;
-    string type = 5;
-    DiscountConfig config = 6;
-    int32 collection_key_id = 7;
-    bool is_active = 8;
-    string start_date = 9;
-    string end_date = 10;
+    string title = 3;
+    string description = 4;
+    string status = 5;
+    string type = 6;
+    DiscountConfig config = 7;
+    int32 collection_key_id = 8;
+    bool is_active = 9;
+    string start_date = 10;
+    string end_date = 11;
 }
 
 message ListCouponsResponsePayload {
@@ -172,12 +173,13 @@ message GetUserCouponsRequest {
 message UserCouponSummary {
     int32 coupon_id = 1;
     string coupon_code = 2;
-    string description = 3;
-    string status = 4;
-    string type = 5;
-    double value = 6;
-    string start_date = 7;
-    string end_date = 8;
+    string title = 3;
+    string description = 4;
+    string status = 5;
+    string type = 6;
+    double value = 7;
+    string start_date = 8;
+    string end_date = 9;
 }
 
 message GetUserCouponsResponsePayload {
@@ -191,4 +193,14 @@ message GetUserCouponsResponse {
     Status status = 1;
     GetUserCouponsResponsePayload payload = 2;
     Error error = 3;
+}
+
+message RollbackCouponUsageRequest {
+    int32 user_id = 1;
+    int32 coupon_id = 2;
+}
+
+message RollbackCouponUsageResponse {
+    Status status = 1;
+    Error error = 2;
 }

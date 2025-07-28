@@ -3,6 +3,8 @@ package org.couponmanagement.dto;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
+import java.util.List;
+
 @Data
 public class ModifyRuleCollectionRequest {
     @NotNull(message = "Collection ID is required")
@@ -10,6 +12,7 @@ public class ModifyRuleCollectionRequest {
 
     private String requestId;
     private String name;
-    private String description;
     private Boolean isActive;
+
+    private List<Integer> ruleIds;
 }

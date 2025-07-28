@@ -1,5 +1,6 @@
 package org.couponmanagement.grpc;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.observation.annotation.Observed;
 import lombok.RequiredArgsConstructor;
@@ -18,12 +19,13 @@ import org.couponmanagement.entity.RuleCollection;
 import org.couponmanagement.entity.Rule;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
-
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @GrpcService
 @RequiredArgsConstructor
@@ -259,7 +261,6 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                 validator.validateNotBlank(request.getDescription(), "description");
             }
 
-            // Fetch rule from DB
             Rule rule = ruleRepository.findById(request.getRuleId()).orElse(null);
             if (rule == null) {
                 var notFoundStatus = RuleServiceProto.Status.newBuilder()
@@ -279,40 +280,89 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                 return;
             }
 
-            // Update fields
-            rule.setDescription(request.getDescription());
-            rule.setType(request.getRuleType());
-            rule.setRuleConfiguration(request.getRuleConfig().getConfigMap().toString());
-            rule.setUpdatedAt(LocalDateTime.now());
-            rule.setIsActive(request.getIsActive());
+            // Update fields using custom query
+            String ruleConfigJson = null;
+            if (request.hasRuleConfig() && request.getRuleConfig().getConfigCount() > 0) {
+                // Convert protobuf Struct to JSON string
+                try {
+                    var configMap = request.getRuleConfig().getConfigMap();
+                    // Convert protobuf Values to plain Java objects to avoid circular reference
+                    Map<String, Object> plainConfigMap = new HashMap<>();
+                    for (Map.Entry<String, com.google.protobuf.Value> entry : configMap.entrySet()) {
+                        plainConfigMap.put(entry.getKey(), convertProtobufValueToJavaObject(entry.getValue()));
+                    }
 
-            ruleRepository.save(rule);
-
-            RuleCollection ruleCollection;
-            List<RuleCollection> collections = ruleCollectionRepository.findAll();
-            ruleCollection = collections.stream().filter(rc -> rc.getRuleIdsList().contains(rule.getId())).findFirst().orElse(null);
-
-            if (ruleCollection != null) {
-                Integer collectionId = ruleCollection.getId();
-                var cachedOpt = ruleCacheService.getCachedRuleCollectionWithRules(collectionId);
-                RuleCacheService.RuleCollectionWithRulesCacheInfo cacheInfo = cachedOpt.orElseGet(() ->
-                    RuleCacheService.RuleCollectionWithRulesCacheInfo.fromRuleCollectionWithRules(ruleCollection, new ArrayList<>())
-                );
-                List<RuleCacheService.RuleConfigCacheInfo> rules = cacheInfo.getRules();
-                if (rules == null) rules = new ArrayList<>();
-                rules.removeIf(r -> r.getRuleId().equals(rule.getId()));
-                if (Boolean.TRUE.equals(rule.getIsActive())) {
-                    // Add updated rule if still active
-                    RuleCacheService.RuleConfigCacheInfo updatedRuleCache = RuleCacheService.RuleConfigCacheInfo.fromRule(rule);
-                    rules.add(updatedRuleCache);
+                    ObjectMapper objectMapper = new ObjectMapper();
+                    ruleConfigJson = objectMapper.writeValueAsString(plainConfigMap);
+                } catch (Exception e) {
+                    log.error("Error converting rule config to JSON: {}", e.getMessage());
+                    var errorStatus = RuleServiceProto.Status.newBuilder()
+                            .setCode(RuleServiceProto.StatusCode.INVALID_ARGUMENT)
+                            .setMessage("Invalid rule configuration format")
+                            .build();
+                    var error = RuleServiceProto.Error.newBuilder()
+                            .setCode("INVALID_CONFIG")
+                            .setMessage("Failed to process rule configuration: " + e.getMessage())
+                            .build();
+                    var errorResponse = RuleServiceProto.ModifyRuleResponse.newBuilder()
+                            .setStatus(errorStatus)
+                            .setError(error)
+                            .build();
+                    responseObserver.onNext(errorResponse);
+                    responseObserver.onCompleted();
+                    return;
                 }
-                cacheInfo.setRules(rules);
-                ruleCacheService.cacheRuleCollectionWithRules(collectionId, cacheInfo);
             }
 
-            // Update cache for rule config
-            ruleCacheService.cacheRuleConfig(rule.getId(),
-                    RuleCacheService.RuleConfigCacheInfo.fromRule(rule));
+            // Use custom query to update only non-null fields
+            String description = request.getDescription().isEmpty() ? null : request.getDescription();
+            String ruleType = request.getRuleType().isEmpty() ? null : request.getRuleType();
+
+            int updatedRows = ruleRepository.updateRuleSelectively(
+                    request.getRuleId(),
+                    description,
+                    ruleType,
+                    ruleConfigJson,
+                    request.getIsActive(),
+                    LocalDateTime.now()
+            );
+
+            if (updatedRows == 0) {
+                var errorStatus = RuleServiceProto.Status.newBuilder()
+                        .setCode(RuleServiceProto.StatusCode.INTERNAL)
+                        .setMessage("Failed to update rule")
+                        .build();
+                var error = RuleServiceProto.Error.newBuilder()
+                        .setCode("UPDATE_FAILED")
+                        .setMessage("No rows were updated for rule ID " + request.getRuleId())
+                        .build();
+                var errorResponse = RuleServiceProto.ModifyRuleResponse.newBuilder()
+                        .setStatus(errorStatus)
+                        .setError(error)
+                        .build();
+                responseObserver.onNext(errorResponse);
+                responseObserver.onCompleted();
+                return;
+            }
+
+            Rule updatedRule = ruleRepository.findById(request.getRuleId()).orElse(null);
+            if (updatedRule == null) {
+                log.error("Rule not found after update: {}", request.getRuleId());
+                var errorStatus = RuleServiceProto.Status.newBuilder()
+                        .setCode(RuleServiceProto.StatusCode.INTERNAL)
+                        .setMessage("Rule not found after update")
+                        .build();
+                var errorResponse = RuleServiceProto.ModifyRuleResponse.newBuilder()
+                        .setStatus(errorStatus)
+                        .build();
+                responseObserver.onNext(errorResponse);
+                responseObserver.onCompleted();
+                return;
+            }
+
+            // Cache updated rule config
+            ruleCacheService.cacheRuleConfig(updatedRule.getId(),
+                    RuleCacheService.RuleConfigCacheInfo.fromRule(updatedRule));
 
             // Build response
             var response = RuleServiceProto.ModifyRuleResponse.newBuilder()
@@ -321,17 +371,17 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                             .setMessage("Rule updated successfully")
                             .build())
                     .setPayload(RuleServiceProto.RuleDetailsPayload.newBuilder()
-                            .setRuleId(rule.getId())
-                            .setDescription(rule.getDescription() != null ? rule.getDescription() : "")
-                            .setIsActive(rule.getIsActive() != null ? rule.getIsActive() : false)
-                            .setRuleType(rule.getType() != null ? rule.getType() : "")
+                            .setRuleId(updatedRule.getId())
+                            .setDescription(updatedRule.getDescription() != null ? updatedRule.getDescription() : "")
+                            .setIsActive(updatedRule.getIsActive() != null ? updatedRule.getIsActive() : false)
+                            .setRuleType(updatedRule.getType() != null ? updatedRule.getType() : "")
                             .setRuleConfig(
                                 RuleServiceProto.RuleConfiguration.newBuilder()
                                     .putAllConfig(request.getRuleConfig().getConfigMap())
                                     .build()
                             )
-                            .setCreatedAt(rule.getCreatedAt().toString())
-                            .setUpdatedAt(rule.getUpdatedAt().toString())
+                            .setCreatedAt(updatedRule.getCreatedAt().toString())
+                            .setUpdatedAt(updatedRule.getUpdatedAt().toString())
                             .build())
                     .build();
 
@@ -505,19 +555,33 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                 responseObserver.onCompleted();
                 return;
             }
-            // Update fields
             collection.setName(request.getName());
             collection.setRuleIdsList(request.getRuleIdsList());
             collection.setUpdatedAt(LocalDateTime.now());
-            // Save
+
             ruleCollectionRepository.save(collection);
-            // Cache logic
-            if (!request.getIsActive()) {
-                ruleCacheService.invalidateRuleCollectionCache(collectionId);
-            } else {
-                ruleCacheService.cacheRuleCollection(collectionId, RuleCacheService.RuleCollectionCacheInfo.fromRuleCollection(collection));
+            ruleCacheService.cacheRuleCollection(collectionId, RuleCacheService.RuleCollectionCacheInfo.fromRuleCollection(collection));
+
+            if (!request.getRuleIdsList().isEmpty()) {
+                try {
+                    List<Rule> updatedRules = ruleRepository.findByIdIn(request.getRuleIdsList());
+
+                    List<Rule> activeRules = updatedRules.stream()
+                            .filter(rule -> Boolean.TRUE.equals(rule.getIsActive()))
+                            .toList();
+
+                    RuleCacheService.RuleCollectionWithRulesCacheInfo updatedCacheInfo =
+                        RuleCacheService.RuleCollectionWithRulesCacheInfo.fromRuleCollectionWithRules(collection, activeRules);
+
+                    ruleCacheService.cacheRuleCollectionWithRules(collectionId, updatedCacheInfo);
+
+                    log.info("Updated RuleCollectionWithRulesCacheInfo for collection: {}, activeRules: {}",
+                            collectionId, activeRules.size());
+                } catch (Exception e) {
+                    log.error("Error updating RuleCollectionWithRulesCacheInfo for collection {}: {}",
+                            collectionId, e.getMessage(), e);
+                }
             }
-            // Build response
             var response = RuleServiceProto.ModifyRuleCollectionResponse.newBuilder()
                     .setStatus(RuleServiceProto.Status.newBuilder()
                             .setCode(RuleServiceProto.StatusCode.OK)
@@ -526,8 +590,6 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                     .setPayload(RuleServiceProto.RuleCollectionDetailsPayload.newBuilder()
                             .setCollectionId(collection.getId())
                             .setName(collection.getName())
-                            .setDescription("")
-                            .setIsActive(request.getIsActive())
                             .addAllRuleIds(collection.getRuleIdsList())
                             .setCreatedAt(collection.getCreatedAt().toString())
                             .setUpdatedAt(collection.getUpdatedAt().toString())
@@ -548,6 +610,36 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                     .build();
             responseObserver.onNext(errorResponse);
             responseObserver.onCompleted();
+        }
+    }
+
+    private Object convertProtobufValueToJavaObject(com.google.protobuf.Value value) {
+        switch (value.getKindCase()) {
+            case NULL_VALUE:
+                return null;
+            case NUMBER_VALUE:
+                return value.getNumberValue();
+            case STRING_VALUE:
+                return value.getStringValue();
+            case BOOL_VALUE:
+                return value.getBoolValue();
+            case STRUCT_VALUE:
+                // Handle nested Structs by converting to Map
+                Map<String, Object> structMap = new HashMap<>();
+                for (Map.Entry<String, com.google.protobuf.Value> entry : value.getStructValue().getFieldsMap().entrySet()) {
+                    structMap.put(entry.getKey(), convertProtobufValueToJavaObject(entry.getValue()));
+                }
+                return structMap;
+            case LIST_VALUE:
+                // Handle Lists by converting each value
+                List<Object> list = new ArrayList<>();
+                for (com.google.protobuf.Value listValue : value.getListValue().getValuesList()) {
+                    list.add(convertProtobufValueToJavaObject(listValue));
+                }
+                return list;
+            case KIND_NOT_SET:
+            default:
+                return null;
         }
     }
 }

@@ -33,6 +33,7 @@ public class OrderService {
     private final RequestValidator validator;
 
     public ProcessOrderResult processOrderManual(ProcessOrderRequest request) {
+        Integer couponId = null;
         try {
             log.info("Processing order with manual coupon: userId={}, couponCode={}, amount={}", 
                     request.getUserId(), request.getCouponCode(), request.getOrderAmount());
@@ -44,8 +45,11 @@ public class OrderService {
             CouponResult couponResult = callCouponServiceManual(request.getUserId(), 
                     request.getCouponCode(), request.getOrderAmount(),
                     request.getOrderDate());
-            
+            couponId = couponResult.getCouponId();
             if (!couponResult.isSuccess()) {
+                if (couponId != null) {
+                    rollbackCouponUsage(request.getUserId(), couponId);
+                }
                 return ProcessOrderResult.builder()
                         .success(false)
                         .errorMessage(couponResult.getErrorMessage())
@@ -69,6 +73,9 @@ public class OrderService {
 
         } catch (Exception e) {
             log.error("Error processing manual order: {}", e.getMessage(), e);
+            if (couponId != null) {
+                rollbackCouponUsage(request.getUserId(), couponId);
+            }
             return ProcessOrderResult.builder()
                     .success(false)
                     .errorMessage("Failed to process order: " + e.getMessage())
@@ -77,24 +84,26 @@ public class OrderService {
     }
 
     public ProcessOrderResult processOrderAuto(ProcessOrderRequest request) {
+        Integer couponId = null;
         try {
             log.info("Processing order with auto coupon: userId={}, amount={}", 
                     request.getUserId(), request.getOrderAmount());
 
-            // Validate
             validator.validateUserId(request.getUserId());
             validator.validateOrderAmount(request.getOrderAmount());
 
             CouponResult couponResult = callCouponServiceAuto(request.getUserId(), request.getOrderAmount(), request.getOrderDate());
-            
+            couponId = couponResult.getCouponId();
             if (!couponResult.isSuccess()) {
+                if (couponId != null) {
+                    rollbackCouponUsage(request.getUserId(), couponId);
+                }
                 couponResult = CouponResult.builder()
                         .success(true)
                         .discountAmount(BigDecimal.ZERO)
                         .build();
             }
 
-            // Create order
             Order order = createOrder(request, couponResult);
 
             return ProcessOrderResult.builder()
@@ -112,6 +121,9 @@ public class OrderService {
 
         } catch (Exception e) {
             log.error("Error processing auto order: {}", e.getMessage(), e);
+            if (couponId != null) {
+                rollbackCouponUsage(request.getUserId(), couponId);
+            }
             return ProcessOrderResult.builder()
                     .success(false)
                     .errorMessage("Failed to process order: " + e.getMessage())
@@ -213,7 +225,25 @@ public class OrderService {
         return orderRepository.save(order);
     }
 
-    // ============ DTOs ============
+    private void rollbackCouponUsage(Integer userId, Integer couponId) {
+        try {
+            Channel channel = grpcClientFactory.getCouponServiceChannel();
+            CouponServiceGrpc.CouponServiceBlockingStub stub = CouponServiceGrpc.newBlockingStub(channel);
+            var rollbackRequest = CouponServiceProto.RollbackCouponUsageRequest.newBuilder()
+                    .setUserId(userId)
+                    .setCouponId(couponId)
+                    .build();
+            var rollbackResponse = stub.rollbackCouponUsage(rollbackRequest);
+            if (rollbackResponse.getStatus().getCode() == CouponServiceProto.StatusCode.OK) {
+                log.info("Rolled back coupon usage for userId={}, couponId={}", userId, couponId);
+            } else {
+                log.warn("Failed to rollback coupon usage for userId={}, couponId={}, message={}", userId, couponId, rollbackResponse.getStatus().getMessage());
+            }
+        } catch (Exception ex) {
+            log.error("Exception when calling rollbackCouponUsage: userId={}, couponId={}, error={}", userId, couponId, ex.getMessage(), ex);
+        }
+    }
+
 
     @Data
     @Builder

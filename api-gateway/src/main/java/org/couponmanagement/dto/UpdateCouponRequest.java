@@ -2,6 +2,7 @@ package org.couponmanagement.dto;
 
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
+import java.util.Map;
 
 @Data
 public class UpdateCouponRequest {
@@ -11,6 +12,7 @@ public class UpdateCouponRequest {
     private String title;
     private String description;
     private Boolean isActive;
+    private Map<String, Object> config;
     private Integer collectionKeyId;
     private String startDate;
     private String endDate;

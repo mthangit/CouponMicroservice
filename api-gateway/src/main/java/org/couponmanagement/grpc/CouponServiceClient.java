@@ -43,16 +43,6 @@ public class CouponServiceClient {
         }
     }
 
-    public CouponServiceProto.GetCouponDetailsResponse getCouponDetails(CouponServiceProto.GetCouponDetailsRequest request) {
-        try {
-            log.info("Calling coupon service - get details: id={}", request.getCouponId());
-            return couponServiceStub.getCouponDetails(request);
-        } catch (Exception e) {
-            log.error("Error in getCouponDetails: {}", e.getMessage(), e);
-            throw e;
-        }
-    }
-
     public CouponServiceProto.ListCouponsResponse listCoupons(CouponServiceProto.ListCouponsRequest request) {
         try {
             log.info("Calling coupon service - list: page={}, size={}",

@@ -12,7 +12,9 @@ import org.couponmanagement.dto.UserCouponClaimInfo;
 import org.couponmanagement.dto.CouponDetail;
 import org.couponmanagement.coupon.CouponServiceGrpc;
 import org.couponmanagement.coupon.CouponServiceProto;
+import org.couponmanagement.dto.UserCouponIds;
 import org.couponmanagement.entity.Coupon;
+import org.couponmanagement.entity.CouponUser;
 import org.couponmanagement.grpc.annotation.RequireAuth;
 import org.couponmanagement.grpc.validation.RequestValidator;
 import org.couponmanagement.grpc.annotation.PerformanceMonitor;
@@ -26,6 +28,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -209,7 +212,7 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
     }
 
     @Override
-    @RequireAuth("ADMIN")
+    @RequireAuth("MANAGE_COUPON")
     @PerformanceMonitor()
     @Transactional
     public void updateCoupon(CouponServiceProto.UpdateCouponRequest request,
@@ -325,13 +328,6 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
             responseObserver.onNext(errorResponse);
             responseObserver.onCompleted();
         }
-    }
-
-    @Override
-    @RequireAuth("VIEW_COUPON")
-    @PerformanceMonitor()
-    public void getCouponDetails(CouponServiceProto.GetCouponDetailsRequest request,
-                               StreamObserver<CouponServiceProto.GetCouponDetailsResponse> responseObserver) {
     }
 
     @Override
@@ -456,6 +452,74 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
         }
     }
 
+    @Override
+    @RequireAuth("USE_COUPON")
+    @PerformanceMonitor()
+    @Transactional
+    public void rollbackCouponUsage(CouponServiceProto.RollbackCouponUsageRequest request,
+                                    StreamObserver<CouponServiceProto.RollbackCouponUsageResponse> responseObserver) {
+        log.info("Received rollbackCouponUsage gRPC request: userId={}, couponId={}", request.getUserId(), request.getCouponId());
+        try {
+            // Find CouponUser by userId and couponId
+            var couponUserOpt = couponUserRepository.findByUserIdAndCouponId(request.getUserId(), request.getCouponId());
+            if (couponUserOpt.isEmpty()) {
+                var response = CouponServiceProto.RollbackCouponUsageResponse.newBuilder()
+                        .setStatus(CouponServiceProto.Status.newBuilder()
+                                .setCode(CouponServiceProto.StatusCode.NOT_FOUND)
+                                .setMessage("Coupon usage not found for user")
+                                .build())
+                        .setError(CouponServiceProto.Error.newBuilder()
+                                .setCode("NOT_FOUND")
+                                .setMessage("Coupon usage not found for user")
+                                .build())
+                        .build();
+                responseObserver.onNext(response);
+                responseObserver.onCompleted();
+                return;
+            }
+            var couponUser = couponUserOpt.get();
+            couponUser.setStatus(CouponUser.CouponUserStatus.CLAIMED);
+            couponUser.setUsedAt(null);
+            couponUser.setUpdatedAt(java.time.LocalDateTime.now());
+            couponUserRepository.save(couponUser);
+
+            var userCouponIdsOpt = couponCacheService.getCachedUserCouponIds(request.getUserId());
+            UserCouponIds userCouponIds = userCouponIdsOpt.orElseGet(() -> UserCouponIds.of(new HashMap<>()));
+            UserCouponClaimInfo claimInfo = UserCouponClaimInfo.builder()
+                    .userId(couponUser.getUserId())
+                    .couponId(couponUser.getCouponId())
+                    .claimedDate(couponUser.getClaimedAt())
+                    .expiryDate(couponUser.getExpiryDate())
+                    .build();
+            userCouponIds.getUserCouponInfo().put(couponUser.getCouponId(), claimInfo);
+            couponCacheService.cacheUserCouponIds(request.getUserId(), userCouponIds);
+
+            var response = CouponServiceProto.RollbackCouponUsageResponse.newBuilder()
+                    .setStatus(CouponServiceProto.Status.newBuilder()
+                            .setCode(CouponServiceProto.StatusCode.OK)
+                            .setMessage("Coupon usage rolled back successfully")
+                            .build())
+                    .build();
+            responseObserver.onNext(response);
+            responseObserver.onCompleted();
+        } catch (Exception e) {
+            log.error("Error in rollbackCouponUsage gRPC call: userId={}, couponId={}, error={}",
+                    request.getUserId(), request.getCouponId(), e.getMessage(), e);
+            var errorResponse = CouponServiceProto.RollbackCouponUsageResponse.newBuilder()
+                    .setStatus(CouponServiceProto.Status.newBuilder()
+                            .setCode(CouponServiceProto.StatusCode.INTERNAL)
+                            .setMessage("Internal server error")
+                            .build())
+                    .setError(CouponServiceProto.Error.newBuilder()
+                            .setCode("INTERNAL_ERROR")
+                            .setMessage("Internal server error: " + e.getMessage())
+                            .build())
+                    .build();
+            responseObserver.onNext(errorResponse);
+            responseObserver.onCompleted();
+        }
+    }
+
     private LocalDateTime parseOrderDateTime(String orderDate) {
         if (orderDate == null || orderDate.trim().isEmpty()) {
             return LocalDateTime.now();
@@ -575,9 +639,11 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
         return CouponServiceProto.CouponSummary.newBuilder()
                 .setCouponId(couponDetail.getCouponId())
                 .setCode(couponDetail.getCouponCode())
+                .setTitle(couponDetail.getTitle())
                 .setDescription(couponDetail.getDescription() != null ? couponDetail.getDescription() : "")
                 .setStatus(couponDetail.getStatus())
                 .setType(couponDetail.getType())
+                .setCollectionKeyId(couponDetail.getCollectionKeyId())
                 .setIsActive(couponDetail.isActive())
                 .setConfig(discountConfigBuilder.build())
                 .setStartDate(couponDetail.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
@@ -605,6 +671,7 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
         return CouponServiceProto.UserCouponSummary.newBuilder()
                 .setCouponId(couponDetail.getCouponId())
                 .setCouponCode(couponDetail.getCouponCode())
+                .setTitle(couponDetail.getTitle())
                 .setDescription(couponDetail.getDescription() != null ? couponDetail.getDescription() : "")
                 .setStatus(couponDetail.isActive() ? "ACTIVE" : "INACTIVE")
                 .setType(couponDetail.getType())
