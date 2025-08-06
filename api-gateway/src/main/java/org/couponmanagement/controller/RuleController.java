@@ -33,40 +33,16 @@ public class RuleController {
     @Autowired
     private RuleServiceClient ruleServiceClient;
 
-    @GetMapping("/collections/{collectionId}")
-    @RequireAdmin
-    public ResponseEntity<?> getRuleCollection(@PathVariable int collectionId) {
-        try {
-            log.info("Get rule collection: id={}", collectionId);
-
-            RuleServiceProto.GetRuleCollectionRequest request = RuleServiceProto.GetRuleCollectionRequest.newBuilder()
-                    .setRequestId(UUID.randomUUID().toString())
-                    .setCollectionId(collectionId)
-                    .build();
-
-            RuleServiceProto.GetRuleCollectionResponse response = ruleServiceClient.getRuleCollection(request);
-
-            if (response.getStatus().getCode() == RuleServiceProto.StatusCode.OK) {
-                return ResponseEntity.ok(response.getPayload());
-            } else {
-                return ResponseEntity.badRequest().body(response.getError());
-            }
-        } catch (Exception e) {
-            log.error("Error in get rule collection: {}", e.getMessage(), e);
-            return ResponseEntity.internalServerError().body("Internal server error");
-        }
-    }
-
     @PutMapping("/{ruleId}")
     @RequireAdmin
-    public ResponseEntity<?> modifyRule(@PathVariable int ruleId, @Valid @RequestBody ModifyRuleRequest request) {
+    public ResponseEntity<?> modifyRule(@PathVariable("ruleId") int ruleId, @Valid @RequestBody ModifyRuleRequest request) {
         try {
             log.info("Modify rule: id={}", ruleId);
             ObjectMapper objectMapper = new ObjectMapper();
 
             RuleServiceProto.ModifyRuleRequest.Builder protoRequestBuilder = RuleServiceProto.ModifyRuleRequest.newBuilder()
                 .setRuleId(ruleId)
-                .setRequestId(request.getRequestId() != null ? request.getRequestId() : UUID.randomUUID().toString());
+                .setRequestId(UUID.randomUUID().toString());
 
             if (request.getDescription() != null) {
                 protoRequestBuilder.setDescription(request.getDescription());
@@ -322,8 +298,6 @@ public class RuleController {
 
     private Object convertProtobufValueToJavaObject(com.google.protobuf.Value value) {
         switch (value.getKindCase()) {
-            case NULL_VALUE:
-                return null;
             case NUMBER_VALUE:
                 return value.getNumberValue();
             case STRING_VALUE:

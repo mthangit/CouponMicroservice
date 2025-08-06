@@ -8,28 +8,44 @@ import org.couponmanagement.engine.RuleEvaluationContext;
 import org.couponmanagement.engine.RuleHandler;
 import org.couponmanagement.entity.Rule;
 import org.couponmanagement.entity.RuleCollection;
+import org.couponmanagement.grpc.annotation.PerformanceMonitor;
 import org.couponmanagement.repository.RuleCollectionRepository;
 import org.couponmanagement.repository.RuleRepository;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class RuleEvaluationService {
 
     private final RuleCollectionRepository ruleCollectionRepository;
     private final RuleRepository ruleRepository;
-    @Autowired
-    @Qualifier("ruleHandlerMap")
-    private final Map<String, RuleHandler> ruleHandlerMap;
     private final RuleCacheService ruleCacheService;
+    private final Map<String, RuleHandler> ruleHandlerMap;
+    private final Executor ruleEvaluationExecutor;
+
+    private final ConcurrentHashMap<String, RuleHandler> handlerCache = new ConcurrentHashMap<>();
+
+    public RuleEvaluationService(
+            RuleCollectionRepository ruleCollectionRepository,
+            RuleRepository ruleRepository,
+            RuleCacheService ruleCacheService,
+            @Qualifier("ruleHandlerMap") Map<String, RuleHandler> ruleHandlerMap,
+            @Qualifier("ruleEvaluationExecutor") Executor ruleEvaluationExecutor) {
+        this.ruleCollectionRepository = ruleCollectionRepository;
+        this.ruleRepository = ruleRepository;
+        this.ruleCacheService = ruleCacheService;
+        this.ruleHandlerMap = ruleHandlerMap;
+        this.ruleEvaluationExecutor = ruleEvaluationExecutor;
+    }
 
     public record RuleCollectionEvaluationResult(
             Integer collectionId,
@@ -42,11 +58,20 @@ public class RuleEvaluationService {
             List<Rule> rules
     ) {}
 
-    @Observed(name = "evaluate-rule-collection", contextualName = "rule-collection-evaluation")
+    public record RuleEvaluationResult(
+            Integer ruleId,
+            String ruleType,
+            boolean success,
+            String errorMessage,
+            long evaluationTimeMs
+    ) {}
+
+    @Observed(name = "evaluate-rule-collection")
     public RuleCollectionEvaluationResult evaluateRuleCollection(Integer collectionId, RuleEvaluationContext context) {
         log.info("Evaluating rule collection with context: id={}, context={}", collectionId, context);
 
         try {
+
             if (context == null || context.getOrderAmount() == null) {
                 return new RuleCollectionEvaluationResult(collectionId, false, "Invalid evaluation context or order amount");
             }
@@ -61,7 +86,7 @@ public class RuleEvaluationService {
                 return new RuleCollectionEvaluationResult(collectionId, false, "No rules found in collection: " + collectionId);
             }
 
-            String errorMessage = evaluateAllRulesWithDetails(collectionWithRules.rules(), context);
+            String errorMessage = evaluateRulesParallelAndCheckFailure(collectionWithRules.rules(), context);
             boolean success = (errorMessage == null);
 
             log.info("Rule collection {} evaluation completed: success={}, error={}", collectionId, success, errorMessage);
@@ -78,7 +103,7 @@ public class RuleEvaluationService {
         log.debug("Evaluating rule: id={}, type={}", rule.getId(), rule.getType());
 
         try {
-            RuleHandler handler = ruleHandlerMap.get(rule.getType());
+            RuleHandler handler = getCachedHandler(rule.getType());
             if (handler == null) {
                 log.error("No handler found for rule type: {}", rule.getType());
                 return false;
@@ -90,9 +115,12 @@ public class RuleEvaluationService {
                 return false;
             }
 
+            long startTime = System.currentTimeMillis();
             boolean result = handler.check(config, context);
+            long evaluationTime = System.currentTimeMillis() - startTime;
 
-            log.debug("Rule {} evaluation: type={}, result={}", rule.getId(), rule.getType(), result);
+            log.debug("Rule {} evaluation: type={}, result={}, time={}ms", 
+                     rule.getId(), rule.getType(), result, evaluationTime);
             return result;
 
         } catch (Exception e) {
@@ -101,85 +129,199 @@ public class RuleEvaluationService {
         }
     }
 
+    @PerformanceMonitor
+    public List<RuleEvaluationResult> evaluateRulesParallel(List<Rule> rules, RuleEvaluationContext context) {
+        if (rules == null || rules.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        log.debug("Evaluating {} rules in parallel", rules.size());
+
+        List<CompletableFuture<RuleEvaluationResult>> futures = rules.parallelStream()
+                .map(rule -> CompletableFuture.supplyAsync(() -> evaluateRuleWithDetails(rule, context), ruleEvaluationExecutor))
+                .toList();
+
+        CompletableFuture<Void> allFutures = CompletableFuture.allOf(
+                futures.toArray(new CompletableFuture[0])
+        );
+
+        try {
+            allFutures.get(30, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.error("Timeout or error during parallel rule evaluation", e);
+            futures.forEach(future -> future.cancel(true));
+        }
+
+        return futures.stream()
+                .map(future -> {
+                    try {
+                        return future.get();
+                    } catch (Exception e) {
+                        log.error("Error getting rule evaluation result", e);
+                        return new RuleEvaluationResult(null, null, false, "Evaluation failed: " + e.getMessage(), 0);
+                    }
+                })
+                .toList();
+    }
+
+
+    @Observed(name = "evaluate-rule-with-details")
+    private RuleEvaluationResult evaluateRuleWithDetails(Rule rule, RuleEvaluationContext context) {
+        long startTime = System.currentTimeMillis();
+        
+        try {
+            RuleHandler handler = getCachedHandler(rule.getType());
+            if (handler == null) {
+                return new RuleEvaluationResult(
+                    rule.getId(), rule.getType(), false, 
+                    "No handler found for rule type: " + rule.getType(),
+                    System.currentTimeMillis() - startTime
+                );
+            }
+
+            String config = rule.getRuleConfiguration();
+            if (config == null || config.trim().isEmpty()) {
+                return new RuleEvaluationResult(
+                    rule.getId(), rule.getType(), false,
+                    "Rule configuration is null or empty",
+                    System.currentTimeMillis() - startTime
+                );
+            }
+
+            boolean result = handler.check(config, context);
+            long evaluationTime = System.currentTimeMillis() - startTime;
+
+            return new RuleEvaluationResult(
+                rule.getId(), rule.getType(), result,
+                result ? null : rule.getDescription(),
+                evaluationTime
+            );
+
+        } catch (Exception e) {
+            long evaluationTime = System.currentTimeMillis() - startTime;
+            return new RuleEvaluationResult(
+                rule.getId(), rule.getType(), false,
+                "Exception during evaluation: " + e.getMessage(),
+                evaluationTime
+            );
+        }
+    }
+
+    private RuleHandler getCachedHandler(String ruleType) {
+        return handlerCache.computeIfAbsent(ruleType, type -> {
+            RuleHandler handler = ruleHandlerMap.get(type);
+            if (handler != null) {
+                log.debug("Cached handler for rule type: {}", type);
+            }
+            return handler;
+        });
+    }
+
     @Observed(name = "evaluate-multiple-collections")
-    public List<RuleCollectionEvaluationResult> evaluateMultipleCollections(List<Integer> collectionIds, RuleEvaluationContext context) {
-        log.info("Batch evaluating {} collections with context: {}", collectionIds.size(), context);
+    @PerformanceMonitor
+    public List<RuleCollectionEvaluationResult> evaluateMultipleCollections(Integer collectionId, RuleEvaluationContext context) {
+        log.info("Evaluating first collection from collections with context: {}", collectionId, context);
 
         if (context == null || context.getOrderAmount() == null) {
-            return collectionIds.stream()
-                    .map(id -> new RuleCollectionEvaluationResult(id, false, "Invalid evaluation context or order amount"))
-                    .toList();
+            return List.of(new RuleCollectionEvaluationResult(null, false, "Invalid evaluation context or order amount"));
         }
 
-        List<RuleCollectionEvaluationResult> results = new ArrayList<>();
-
-        for (Integer collectionId : collectionIds) {
-            try {
-                RuleCollectionEvaluationResult result = evaluateRuleCollection(collectionId, context);
-                results.add(result);
-                log.debug("Collection {} evaluation result: success={}, error={}",
-                        collectionId, result.success(), result.errorMessage());
-            } catch (Exception e) {
-                log.error("Error evaluating collection {}: {}", collectionId, e);
-                results.add(new RuleCollectionEvaluationResult(collectionId, false, "Internal error: " + e.getMessage()));
-            }
+        if (collectionId == null) {
+            return List.of(new RuleCollectionEvaluationResult(null, false, "No collection IDs provided"));
         }
 
-        long successCount = results.stream().mapToLong(r -> r.success() ? 1 : 0).sum();
-        log.info("Batch evaluation completed: {} collections processed, {} successful", results.size(), successCount);
-        return results;
+        try {
+            RuleCollectionEvaluationResult result = evaluateRuleCollection(collectionId, context);
+            log.debug("Collection {} evaluation result: success={}, error={}",
+                    collectionId, result.success(), result.errorMessage());
+            return List.of(result);
+        } catch (Exception e) {
+            log.error("Error evaluating collection {}: {}", collectionId, e);
+            return List.of(new RuleCollectionEvaluationResult(collectionId, false, "Internal error: " + e.getMessage()));
+        }
     }
 
     private RuleCollectionWithRules loadRuleCollectionWithRules(Integer collectionId) {
         try {
-            Optional<RuleCacheService.RuleCollectionWithRulesCacheInfo> cachedInfo =
-                    ruleCacheService.getCachedRuleCollectionWithRules(collectionId);
+            Optional<RuleCacheService.RuleCollectionCacheInfo> cachedCollectionInfo =
+                    ruleCacheService.getCachedRuleCollection(collectionId);
 
-            if (cachedInfo.isPresent()) {
-                log.debug("Using cached rule collection with rules: {}", collectionId);
-                RuleCacheService.RuleCollectionWithRulesCacheInfo cacheInfo = cachedInfo.get();
-
-                RuleCollection collection = new RuleCollection();
-                collection.setId(cacheInfo.getCollectionId());
-                collection.setName(cacheInfo.getName());
-                collection.setRuleIds(cacheInfo.getRuleIds());
-
-                List<Rule> rules = cacheInfo.getRules().parallelStream()
-                        .map(this::convertCacheInfoToRule)
-                        .toList();
-
-                return new RuleCollectionWithRules(collection, rules);
-            }
-
-            Optional<RuleCollection> collectionOpt = ruleCollectionRepository.findById(collectionId);
-            if (collectionOpt.isEmpty()) {
-                log.warn("Rule collection not found: {}", collectionId);
-                return null;
-            }
-
-            RuleCollection collection = collectionOpt.get();
+            RuleCollection collection;
             List<Rule> rules = new ArrayList<>();
-            List<Integer> ruleIdsList = collection.getRuleIdsList();
 
-            if (!ruleIdsList.isEmpty()) {
-                rules = ruleRepository.findByIdIn(ruleIdsList);
-                log.debug("Loaded {} rules for collection {} using rule IDs: {}",
-                        rules.size(), collectionId, ruleIdsList);
+            if (cachedCollectionInfo.isPresent()) {
+                log.debug("Using cached rule collection: {}", collectionId);
+                RuleCacheService.RuleCollectionCacheInfo collectionInfo = cachedCollectionInfo.get();
+                
+                collection = new RuleCollection();
+                collection.setId(collectionInfo.getCollectionId());
+                collection.setName(collectionInfo.getName());
+                collection.setRuleIds(collectionInfo.getRuleIds());
+
+                List<Integer> ruleIdsList = collection.getRuleIdsList();
+                if (!ruleIdsList.isEmpty()) {
+                    rules = loadRulesFromCacheOrDatabase(ruleIdsList);
+                }
             } else {
-                log.warn("No rule IDs found in collection: {}", collectionId);
+                Optional<RuleCollection> collectionOpt = ruleCollectionRepository.findById(collectionId);
+                if (collectionOpt.isEmpty()) {
+                    log.warn("Rule collection not found: {}", collectionId);
+                    return null;
+                }
+
+                collection = collectionOpt.get();
+                
+                RuleCacheService.RuleCollectionCacheInfo collectionInfo = 
+                    RuleCacheService.RuleCollectionCacheInfo.fromRuleCollection(collection);
+                ruleCacheService.cacheRuleCollection(collectionId, collectionInfo);
+
+                List<Integer> ruleIdsList = collection.getRuleIdsList();
+                if (!ruleIdsList.isEmpty()) {
+                    rules = loadRulesFromCacheOrDatabase(ruleIdsList);
+                } else {
+                    log.warn("No rule IDs found in collection: {}", collectionId);
+                }
             }
 
-            RuleCacheService.RuleCollectionWithRulesCacheInfo cacheInfo =
-                    RuleCacheService.RuleCollectionWithRulesCacheInfo.fromRuleCollectionWithRules(collection, rules);
-            ruleCacheService.cacheRuleCollectionWithRules(collectionId, cacheInfo);
-
-            log.debug("Loaded and cached rule collection: {} with {} rules", collectionId, rules.size());
+            log.debug("Loaded rule collection: {} with {} rules", collectionId, rules.size());
             return new RuleCollectionWithRules(collection, rules);
 
         } catch (Exception e) {
             log.error("Error loading rule collection: {}", collectionId, e);
             return null;
         }
+    }
+
+    private List<Rule> loadRulesFromCacheOrDatabase(List<Integer> ruleIds) {
+        List<Rule> rules = new ArrayList<>();
+        List<Integer> uncachedRuleIds = new ArrayList<>();
+
+        for (Integer ruleId : ruleIds) {
+            Optional<RuleCacheService.RuleConfigCacheInfo> cachedRuleInfo = 
+                ruleCacheService.getCachedRuleConfig(ruleId);
+            
+            if (cachedRuleInfo.isPresent()) {
+                log.debug("Using cached rule config: {}", ruleId);
+                rules.add(convertCacheInfoToRule(cachedRuleInfo.get()));
+            } else {
+                uncachedRuleIds.add(ruleId);
+            }
+        }
+
+        if (!uncachedRuleIds.isEmpty()) {
+            log.debug("Loading {} uncached rules from database: {}", uncachedRuleIds.size(), uncachedRuleIds);
+            List<Rule> dbRules = ruleRepository.findByIdIn(uncachedRuleIds);
+            
+            for (Rule rule : dbRules) {
+                // Cache individual rule
+                RuleCacheService.RuleConfigCacheInfo ruleInfo = 
+                    RuleCacheService.RuleConfigCacheInfo.fromRule(rule);
+                ruleCacheService.cacheRuleConfig(rule.getId(), ruleInfo);
+                rules.add(rule);
+            }
+        }
+
+        return rules;
     }
 
     private Rule convertCacheInfoToRule(RuleCacheService.RuleConfigCacheInfo cacheInfo) {
@@ -191,51 +333,43 @@ public class RuleEvaluationService {
         return rule;
     }
 
-    private boolean evaluateAllRules(List<Rule> rules, RuleEvaluationContext context) {
-        if (rules == null || rules.isEmpty()) {
-            log.warn("No rules to evaluate");
-            return false;
-        }
-
-        for (Rule rule : rules) {
-            boolean ruleResult = evaluateRule(rule, context);
-            if (!ruleResult) {
-                log.debug("Rule collection failed at rule {}: {}", rule.getId(), rule.getDescription());
-                return false;
-            }
-        }
-
-        log.debug("All {} rules passed evaluation", rules.size());
-        return true;
-    }
-
-    @Observed(name = "evaluate-all-rules-details", contextualName = "all-rules-detailed-evaluation")
-    private String evaluateAllRulesWithDetails(List<Rule> rules, RuleEvaluationContext context) {
+    @Observed(name = "evaluate-rules-parallel")
+    private String evaluateRulesParallelAndCheckFailure(List<Rule> rules, RuleEvaluationContext context) {
         if (rules == null || rules.isEmpty()) {
             return "No rules to evaluate";
         }
 
-        for (Rule rule : rules) {
+        log.debug("Starting parallel evaluation using evaluateRulesParallel for {} rules", rules.size());
+        long startTime = System.currentTimeMillis();
+
+        List<RuleEvaluationResult> results = evaluateRulesParallel(rules, context);
+
+        String combinedErrorMessages = results.parallelStream()
+                .filter(result -> !result.success())
+                .map(RuleEvaluationResult::errorMessage)
+                .filter(Objects::nonNull)
+                .collect(Collectors.joining(", "));
+
+        long evaluationTime = System.currentTimeMillis() - startTime;
+        log.debug("Parallel evaluation using evaluateRulesParallel completed in {}ms for {} rules", evaluationTime, rules.size());
+
+        return combinedErrorMessages.isEmpty() ? null : combinedErrorMessages;
+    }
+
+    public void shutdown() {
+        if (ruleEvaluationExecutor != null && ruleEvaluationExecutor instanceof ThreadPoolTaskExecutor) {
+            ThreadPoolTaskExecutor executor = (ThreadPoolTaskExecutor) ruleEvaluationExecutor;
+            log.info("Shutting down rule evaluation thread pool");
+            executor.shutdown();
             try {
-                boolean ruleResult = evaluateRule(rule, context);
-                if (!ruleResult) {
-                    String errorMsg = String.format("Rule failed: %s (ID: %d, Type: %s)",
-                            rule.getDescription() != null ? rule.getDescription() : "No description",
-                            rule.getId(),
-                            rule.getType());
-                    log.debug("Rule evaluation failed: {}", errorMsg);
-                    return errorMsg;
+                if (!executor.getThreadPoolExecutor().awaitTermination(30, TimeUnit.SECONDS)) {
+                    executor.getThreadPoolExecutor().shutdownNow();
                 }
-            } catch (Exception e) {
-                String errorMsg = String.format("Error evaluating rule %d (%s): %s",
-                        rule.getId(), rule.getType(), e.getMessage());
-                log.error("Rule evaluation error: {}", errorMsg, e);
-                return errorMsg;
+            } catch (InterruptedException e) {
+                executor.getThreadPoolExecutor().shutdownNow();
+                Thread.currentThread().interrupt();
             }
         }
-
-        log.debug("All {} rules passed detailed evaluation", rules.size());
-        return null;
     }
 }
 

@@ -27,7 +27,8 @@ public class RuleCollectionDTO {
     }
 
     public record RuleCollectionSummaryDto(
-            List<Integer> collectionId,
+            Integer collectionId,
+            List<Integer> ruleIds,
             String name,
             String description,
             boolean isActive,
@@ -36,7 +37,8 @@ public class RuleCollectionDTO {
     ) {
         public static RuleCollectionSummaryDto fromProto(RuleServiceProto.RuleCollectionSummary proto) {
             return new RuleCollectionSummaryDto(
-                    proto.getCollectionIdList(),
+                    proto.getCollectionId(),
+                    proto.getRuleIdsList(),
                     proto.getName(),
                     proto.getDescription(),
                     proto.getIsActive(),
@@ -45,5 +47,4 @@ public class RuleCollectionDTO {
             );
         }
     }
-
 }

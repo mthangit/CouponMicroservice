@@ -27,12 +27,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static com.google.protobuf.NullValue.NULL_VALUE;
+import static org.couponmanagement.utils.Utils.parseOrderDateTime;
 
 @GrpcService
 @RequiredArgsConstructor
@@ -131,7 +131,7 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
 
     @Override
     @RequireAuth("USE_COUPON")
-    @PerformanceMonitor()
+    @PerformanceMonitor
     public void applyCouponAuto(CouponServiceProto.ApplyCouponAutoRequest request,
                               StreamObserver<CouponServiceProto.ApplyCouponAutoResponse> responseObserver) {
         
@@ -214,14 +214,13 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
     @Override
     @RequireAuth("MANAGE_COUPON")
     @PerformanceMonitor()
-    @Transactional
+    @Transactional(rollbackFor = IllegalArgumentException.class)
     public void updateCoupon(CouponServiceProto.UpdateCouponRequest request,
                            StreamObserver<CouponServiceProto.UpdateCouponResponse> responseObserver) {
 
         log.info("Received updateCoupon gRPC request: couponId={}", request.getCouponId());
 
         try {
-            // Validate input
             if (request.getCouponId() <= 0) {
                 throw new IllegalArgumentException("Invalid coupon ID");
             }
@@ -229,10 +228,13 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
             Coupon existingCoupon = couponRepository.findById(request.getCouponId())
                     .orElseThrow(() -> new IllegalArgumentException("Coupon not found"));
 
+            if (!request.getEndDate().isEmpty()) {
+                existingCoupon.setExpiryDate(parseOrderDateTime(request.getEndDate()));
+            }
+
             existingCoupon.setDescription(request.getDescription());
             existingCoupon.setCode(request.getCode());
             existingCoupon.setTitle(request.getTitle());
-            existingCoupon.setExpiryDate(parseOrderDateTime(request.getEndDate()));
             existingCoupon.setIsActive(request.getIsActive());
             existingCoupon.setCollectionKeyId(request.getCollectionKeyId());
 
@@ -268,16 +270,7 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
             Coupon updatedCoupon = couponRepository.save(existingCoupon);
             log.info("Coupon updated in database successfully: couponId={}", request.getCouponId());
 
-            try {
-                CouponDetail couponDetail = CouponDetail.fromCoupon(updatedCoupon);
-                updateCouponDetailCaches(couponDetail);
-                couponCacheService.cacheCouponCodeMapping(couponDetail.getCouponCode(), couponDetail.getCouponId());
-                log.info("Cache updated successfully for coupon: couponId={}", request.getCouponId());
-            } catch (Exception cacheException) {
-                log.warn("Failed to update cache for coupon {}: {}",
-                        request.getCouponId(), cacheException.getMessage());
-                throw new Exception("Faild to update cache");
-            }
+            updateCacheAfterTransaction(updatedCoupon, request.getCouponId());
 
             CouponServiceProto.UpdateCouponResponsePayload payload = buildCouponPayload(updatedCoupon);
 
@@ -330,6 +323,17 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
         }
     }
 
+    private void updateCacheAfterTransaction(Coupon updatedCoupon, long couponId) {
+        try {
+            CouponDetail couponDetail = CouponDetail.fromCoupon(updatedCoupon);
+            updateCouponDetailCaches(couponDetail);
+            couponCacheService.cacheCouponCodeMapping(couponDetail.getCouponCode(), couponDetail.getCouponId());
+            log.info("Cache updated successfully for coupon: couponId={}", couponId);
+        } catch (Exception cacheException) {
+            log.warn("Failed to update cache for coupon {}: {}", couponId, cacheException.getMessage());
+        }
+    }
+
     @Override
     @RequireAuth("MANAGE_COUPON")
     @PerformanceMonitor()
@@ -343,9 +347,9 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
             int page = Math.max(0, request.getPage());
             int size = Math.min(Math.max(1, request.getSize()), 100);
 
-            CouponService.CouponsListResult result = couponService.listCoupons(page, size, request.getStatus());
+            CouponService.CouponsListResult result = couponService.listCoupons(page, size);
 
-            List<CouponServiceProto.CouponSummary> couponSummaries = result.couponDetails().stream()
+            List<CouponServiceProto.CouponSummary> couponSummaries = result.couponDetails().parallelStream()
                     .map(this::buildCouponSummaryFromDetail)
                     .toList();
 
@@ -405,7 +409,7 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
 
             CouponService.UserCouponsResult result = couponService.getUserCouponsWithPagination(userId, page, size);
 
-            List<CouponServiceProto.UserCouponSummary> userCouponSummaries = result.userCouponClaimInfos().stream()
+            List<CouponServiceProto.UserCouponSummary> userCouponSummaries = result.userCouponClaimInfos().parallelStream()
                     .filter(claimInfo -> result.couponDetailMap().containsKey(claimInfo.getCouponId()))
                     .map(claimInfo -> buildUserCouponSummary(
                             result.couponDetailMap().get(claimInfo.getCouponId()),
@@ -520,19 +524,6 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
         }
     }
 
-    private LocalDateTime parseOrderDateTime(String orderDate) {
-        if (orderDate == null || orderDate.trim().isEmpty()) {
-            return LocalDateTime.now();
-        }
-
-        try {
-            return LocalDateTime.parse(orderDate, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-        } catch (DateTimeParseException e) {
-            log.warn("Error parsing order_date: {}, using current datetime", orderDate, e);
-            return LocalDateTime.now();
-        }
-    }
-
     private CouponServiceProto.UpdateCouponResponsePayload buildCouponPayload(Coupon coupon) {
         CouponServiceProto.DiscountConfig.Builder discountConfigBuilder =
                 CouponServiceProto.DiscountConfig.newBuilder();
@@ -560,50 +551,14 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
                 .setCode(coupon.getCode())
                 .setTitle(coupon.getTitle() != null ? coupon.getTitle() : "")
                 .setDescription(coupon.getDescription() != null ? coupon.getDescription() : "")
-                .setStatus(coupon.getIsActive() ? "ACTIVE" : "INACTIVE")
                 .setType(coupon.getDiscountType())
-                .setValue(coupon.getDiscountValue() != null ? coupon.getDiscountValue().doubleValue() : 0.0)
                 .setConfig(discountConfigBuilder.build())
+                .setCollectionKeyId(coupon.getCollectionKeyId())
                 .setIsActive(coupon.getIsActive())
                 .setStartDate(coupon.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
                 .setEndDate(coupon.getExpiryDate().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
                 .setCreatedAt(coupon.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
                 .setUpdatedAt(coupon.getUpdatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
-                .build();
-    }
-
-    private CouponServiceProto.CouponSummary buildCouponSummary(Coupon coupon) {
-        CouponServiceProto.DiscountConfig.Builder discountConfigBuilder =
-                CouponServiceProto.DiscountConfig.newBuilder();
-
-        Map<String, Object> configMap = coupon.getDiscountConfigMap();
-        if (!configMap.isEmpty()) {
-            for (Map.Entry<String, Object> entry : configMap.entrySet()) {
-                com.google.protobuf.Value.Builder valueBuilder = com.google.protobuf.Value.newBuilder();
-
-                Object value = entry.getValue();
-                switch (value) {
-                    case String s -> valueBuilder.setStringValue(s);
-                    case Number number -> valueBuilder.setNumberValue(number.doubleValue());
-                    case Boolean b -> valueBuilder.setBoolValue(b);
-                    case null -> valueBuilder.setNullValue(NULL_VALUE);
-                    default -> valueBuilder.setStringValue(value.toString());
-                }
-
-                discountConfigBuilder.putConfig(entry.getKey(), valueBuilder.build());
-            }
-        }
-
-        return CouponServiceProto.CouponSummary.newBuilder()
-                .setCouponId(coupon.getId())
-                .setCode(coupon.getCode())
-                .setDescription(coupon.getDescription() != null ? coupon.getDescription() : "")
-                .setStatus(coupon.getIsActive() ? "ACTIVE" : "INACTIVE")
-                .setType(coupon.getDiscountType())
-                .setIsActive(coupon.getIsActive())
-                .setConfig(discountConfigBuilder.build())
-                .setStartDate(coupon.getCreatedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
-                .setEndDate(coupon.getExpiryDate().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
                 .build();
     }
 
@@ -641,7 +596,6 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
                 .setCode(couponDetail.getCouponCode())
                 .setTitle(couponDetail.getTitle())
                 .setDescription(couponDetail.getDescription() != null ? couponDetail.getDescription() : "")
-                .setStatus(couponDetail.getStatus())
                 .setType(couponDetail.getType())
                 .setCollectionKeyId(couponDetail.getCollectionKeyId())
                 .setIsActive(couponDetail.isActive())
@@ -677,7 +631,7 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
                 .setType(couponDetail.getType())
                 .setValue(value)
                 .setStartDate(userCouponClaimInfo.getClaimedDate().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
-                .setEndDate(couponDetail.getExpiryDate().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
+                .setEndDate(userCouponClaimInfo.getExpiryDate().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME))
                 .build();
     }
 

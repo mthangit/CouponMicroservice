@@ -18,13 +18,13 @@ public class RuleCacheProperties{
     private String keyPrefix = "rule-service";
 
     @Min(1)
-    private long defaultTtlSeconds = 600;
+    private long defaultTtlSeconds = 172800;
     
     @Min(1)
-    private long ruleCollectionTtlSeconds = 900;
+    private long ruleCollectionTtlSeconds = 172800;
     
     @Min(1)
-    private long ruleConfigTtlSeconds = 1800;
+    private long ruleConfigTtlSeconds = 172800;
 
     public String getRuleCollectionKey(Integer collectionId) {
         return "rule-collection:" + collectionId;

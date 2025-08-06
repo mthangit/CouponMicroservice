@@ -35,7 +35,6 @@ public class PerformanceAspect {
         String methodName = joinPoint.getSignature().getName();
 
         long startTime = System.currentTimeMillis();
-        long startMemory = getUsedMemory();
         long startCpuTime = getCpuTime();
 
         boolean success = true;
@@ -49,19 +48,13 @@ public class PerformanceAspect {
             
         } finally {
             long endTime = System.currentTimeMillis();
-            long endMemory = getUsedMemory();
             long endCpuTime = getCpuTime();
 
             long executionTime = endTime - startTime;
-            long memoryUsed = Math.max(0, endMemory - startMemory);
             double cpuUsagePercent = calculateCpuUsage(startCpuTime, endCpuTime, executionTime);
 
             metricsRegistry.recordExecutionTime(methodName, className, executionTime, success);
             metricsRegistry.incrementMethodCalls(methodName, className, success);
-
-            if (performanceMonitor.monitorMemory()) {
-                metricsRegistry.recordMemoryUsage(methodName, className, memoryUsed);
-            }
 
             if (performanceMonitor.monitorCpu() && cpuUsagePercent > 0) {
                 metricsRegistry.recordCpuUsage(methodName, className, cpuUsagePercent);
@@ -69,10 +62,6 @@ public class PerformanceAspect {
         }
     }
 
-    private long getUsedMemory() {
-        Runtime runtime = Runtime.getRuntime();
-        return runtime.totalMemory() - runtime.freeMemory();
-    }
     
     private long getCpuTime() {
         if (threadBean.isCurrentThreadCpuTimeSupported()) {

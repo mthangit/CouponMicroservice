@@ -149,7 +149,6 @@ public class Coupon {
                 return BigDecimal.ZERO;
         }
 
-        // Apply max discount limit if set
         if (config.getMaxDiscount() != null && discountAmount.compareTo(config.getMaxDiscount()) > 0) {
             discountAmount = config.getMaxDiscount();
         }

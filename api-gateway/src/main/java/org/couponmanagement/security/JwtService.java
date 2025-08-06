@@ -64,31 +64,19 @@ public class JwtService {
         }
     }
     
-    /**
-     * Extract username from JWT token
-     */
     public String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);
     }
     
-    /**
-     * Extract expiration date from JWT token
-     */
     public Date extractExpiration(String token) {
         return extractClaim(token, Claims::getExpiration);
     }
     
-    /**
-     * Extract specific claim from JWT token
-     */
     public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
         final Claims claims = extractAllClaims(token);
         return claimsResolver.apply(claims);
     }
     
-    /**
-     * Extract all claims from JWT token
-     */
     private Claims extractAllClaims(String token) {
         try {
             return Jwts.parser()
@@ -114,9 +102,6 @@ public class JwtService {
         }
     }
     
-    /**
-     * Check if JWT token is expired
-     */
     public Boolean isTokenExpired(String token) {
         try {
             return extractExpiration(token).before(new Date());
@@ -125,9 +110,6 @@ public class JwtService {
         }
     }
     
-    /**
-     * Validate JWT token
-     */
     public Boolean validateToken(String token) {
         try {
             extractAllClaims(token);
@@ -153,9 +135,6 @@ public class JwtService {
                 .compact();
     }
     
-    /**
-     * Extract user information from JWT token
-     */
     public UserInfo extractUserInfo(String token) {
         try {
             Claims claims = extractAllClaims(token);
@@ -184,9 +163,6 @@ public class JwtService {
         }
     }
     
-    /**
-     * User information extracted from JWT
-     */
     @lombok.Data
     @lombok.Builder
     @lombok.NoArgsConstructor
@@ -201,9 +177,6 @@ public class JwtService {
         }
     }
     
-    /**
-     * Custom exception for JWT validation errors
-     */
     public static class JwtValidationException extends RuntimeException {
         public JwtValidationException(String message) {
             super(message);

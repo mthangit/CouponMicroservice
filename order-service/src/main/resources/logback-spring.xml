@@ -18,11 +18,18 @@
 
     <!-- Logstash TCP Appender -->
     <appender name="LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
-        <destination>localhost:5000</destination> <!-- Hoặc IP nếu chạy Logstash trong Docker -->
-        <encoder class="net.logstash.logback.encoder.LogstashEncoder" />
+        <destination>localhost:5050</destination>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>
+                {
+                "service": "${spring.application.name:-order-service}",
+                "pod": "${HOSTNAME:-localhost}"
+                }
+            </customFields>
+        </encoder>
     </appender>
 
-    <!-- Logger configurations -->
+    <!-- Logger configurations -->x
     <logger name="org.couponmanagement" level="${LOG_LEVEL}" additivity="false">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="LOGSTASH"/>

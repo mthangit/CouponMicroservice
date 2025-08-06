@@ -2,6 +2,7 @@ package org.couponmanagement.service;
 
 import io.grpc.Channel;
 import io.grpc.StatusRuntimeException;
+import io.micrometer.observation.annotation.Observed;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -11,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.couponmanagement.coupon.CouponServiceGrpc;
 import org.couponmanagement.coupon.CouponServiceProto;
 import org.couponmanagement.entity.Order;
+import org.couponmanagement.grpc.annotation.PerformanceMonitor;
 import org.couponmanagement.grpc.client.GrpcClientFactory;
 import org.couponmanagement.grpc.validation.RequestValidator;
 import org.couponmanagement.repository.OrderRepository;
@@ -32,6 +34,8 @@ public class OrderService {
     private final GrpcClientFactory grpcClientFactory;
     private final RequestValidator validator;
 
+    @Observed(name = "process-order-manual", contextualName = "manual-order-processing")
+    @PerformanceMonitor
     public ProcessOrderResult processOrderManual(ProcessOrderRequest request) {
         Integer couponId = null;
         try {
@@ -83,6 +87,9 @@ public class OrderService {
         }
     }
 
+    @Observed(name = "process-order-auto", contextualName = "auto-order-processing")
+    @PerformanceMonitor
+    @Transactional(rollbackFor = Exception.class)
     public ProcessOrderResult processOrderAuto(ProcessOrderRequest request) {
         Integer couponId = null;
         try {

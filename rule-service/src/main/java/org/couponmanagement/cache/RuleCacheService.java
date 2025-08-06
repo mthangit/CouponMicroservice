@@ -60,11 +60,10 @@ public class RuleCacheService {
     public void cacheRuleCollectionWithRules(Integer collectionId, RuleCollectionWithRulesCacheInfo collectionWithRules) {
         String key = cacheProperties.getRuleCollectionWithRulesKey(collectionId);
         cacheService.put(key, collectionWithRules, cacheProperties.getRuleCollectionTtlSeconds());
-        log.debug("Cached rule collection with rules: collectionId={}, rulesCount={}, ttl={}s", 
+        log.debug("Cached rule collection with rules: collectionId={}, rulesCount={}, ttl={}s",
                 collectionId, collectionWithRules.getRules().size(), cacheProperties.getRuleCollectionTtlSeconds());
     }
 
-    @Observed(name = "get-cached-rule-collection-with-rules")
     public Optional<RuleCollectionWithRulesCacheInfo> getCachedRuleCollectionWithRules(Integer collectionId) {
         String key = cacheProperties.getRuleCollectionWithRulesKey(collectionId);
         Optional<RuleCollectionWithRulesCacheInfo> result = cacheService.get(key, RuleCollectionWithRulesCacheInfo.class);

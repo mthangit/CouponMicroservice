@@ -1,26 +1,27 @@
 package org.couponmanagement.service;
 
+import ch.qos.logback.core.testUtil.RandomUtil;
 import io.grpc.Channel;
 import io.micrometer.observation.annotation.Observed;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.couponmanagement.cache.CouponCacheService;
-import org.couponmanagement.coupon.CouponServiceProto;
+import org.couponmanagement.cache.RedisLockService;
 import org.couponmanagement.dto.CouponDetail;
 import org.couponmanagement.dto.UserCouponClaimInfo;
 import org.couponmanagement.dto.UserCouponIds;
 import org.couponmanagement.entity.Coupon;
 import org.couponmanagement.entity.CouponUser;
+import org.couponmanagement.grpc.annotation.PerformanceMonitor;
 import org.couponmanagement.grpc.client.GrpcClientFactory;
 import org.couponmanagement.grpc.validation.RequestValidator;
 import org.couponmanagement.repository.CouponRepository;
 import org.couponmanagement.repository.CouponUserRepository;
 import org.couponmanagement.rule.RuleServiceGrpc;
 import org.couponmanagement.rule.RuleServiceProto;
-import org.springframework.cglib.core.Local;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,7 +33,6 @@ import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 @Transactional
 public class CouponService {
@@ -41,8 +41,26 @@ public class CouponService {
     private final CouponRepository couponRepository;
     private final RequestValidator validator;
     private final CouponCacheService couponCacheService;
+    private final RedisLockService redisLockService;
     private final Executor couponEvaluationExecutor;
     private final GrpcClientFactory grpcClientFactory;
+
+    public CouponService(
+            CouponUserRepository couponUserRepository,
+            CouponRepository couponRepository,
+            RequestValidator validator,
+            CouponCacheService couponCacheService,
+            RedisLockService redisLockService,
+            @Qualifier("couponEvaluationExecutor") Executor couponEvaluationExecutor,
+            GrpcClientFactory grpcClientFactory) {
+        this.couponUserRepository = couponUserRepository;
+        this.couponRepository = couponRepository;
+        this.validator = validator;
+        this.couponCacheService = couponCacheService;
+        this.redisLockService = redisLockService;
+        this.couponEvaluationExecutor = couponEvaluationExecutor;
+        this.grpcClientFactory = grpcClientFactory;
+    }
 
     @Observed(name = "get-user-coupons", contextualName = "user-coupons-retrieval")
     public UserCouponsResult getUserCouponsWithPagination(Integer userId, int page, int size) {
@@ -81,9 +99,16 @@ public class CouponService {
                 couponDetailMap = dbResult.couponDetailMap();
             }
 
-            int totalCount = userCouponClaimInfos.size();
+            List<UserCouponClaimInfo> activeUserCouponClaimInfos = userCouponClaimInfos.parallelStream()
+                    .filter(claimInfo -> {
+                        CouponDetail couponDetail = couponDetailMap.get(claimInfo.getCouponId());
+                        return couponDetail != null && couponDetail.isActive();
+                    })
+                    .toList();
+
+            int totalCount = activeUserCouponClaimInfos.size();
             List<UserCouponClaimInfo> paginatedCouponClaimInfos =
-                    applyPagination(userCouponClaimInfos, page, size);
+                    applyPagination(activeUserCouponClaimInfos, page, size);
 
             log.info("User coupons retrieved: userId={}, totalCount={}, page={}, size={}, returnedCount={}",
                     userId, totalCount, page, size, paginatedCouponClaimInfos.size());
@@ -104,7 +129,7 @@ public class CouponService {
 
     private void handleMissingCouponDetails(Integer userId, List<Integer> missingCouponIds,
                                           Map<Integer, CouponDetail> couponDetailMap) {
-        List<CouponUser> missingCouponUsers = couponUserRepository.findByUserId(userId).stream()
+        List<CouponUser> missingCouponUsers = couponUserRepository.findActiveCouponsByUserId(userId).parallelStream()
                 .filter(cu -> missingCouponIds.contains(cu.getCouponId()))
                 .toList();
 
@@ -119,9 +144,9 @@ public class CouponService {
     }
 
     private DatabaseCouponsResult loadUserCouponsFromDatabase(Integer userId) {
-        List<CouponUser> allCouponUsers = couponUserRepository.findByUserId(userId);
+        List<CouponUser> allCouponUsers = couponUserRepository.findActiveCouponsByUserId(userId);
 
-        Map<Integer, UserCouponClaimInfo> userCouponInfoMap = allCouponUsers.stream()
+        Map<Integer, UserCouponClaimInfo> userCouponInfoMap = allCouponUsers.parallelStream()
                 .collect(Collectors.toMap(
                         CouponUser::getCouponId,
                         cu -> new UserCouponClaimInfo(
@@ -174,6 +199,7 @@ public class CouponService {
     ) {}
 
     @Observed(name = "apply-coupon-manual", contextualName = "manual-coupon-application")
+    @Transactional
     public CouponApplicationResult applyCouponManual(Integer userId, String couponCode, BigDecimal orderAmount,
                                                      LocalDateTime orderDate) {
         log.info("Applying coupon manually: userId={}, couponCode={}, orderAmount={}",
@@ -184,142 +210,69 @@ public class CouponService {
             validator.validateCouponCode(couponCode);
             validator.validateOrderAmount(orderAmount.doubleValue());
 
-            Optional<Coupon> coupon = Optional.empty();
-            Optional<Integer> couponIdOpt = couponCacheService.getCouponIdByCode(couponCode);
-            Optional<CouponUser> couponUser = Optional.empty();
-            Optional<CouponDetail> couponDetail = Optional.empty();
-            Integer couponId = null;
-            if (couponIdOpt.isPresent()) {
-                couponId = couponIdOpt.get();
-            } else {
-                coupon = couponRepository.findByCodeIgnoreCase(couponCode);
-                if (coupon.isEmpty()) {
-                    return CouponApplicationResult.buildResult(
-                            null,
-                            BigDecimal.valueOf(0),
-                            "Coupon not found",
-                            false
-                    );
-                }
-                couponId = coupon.get().getId();
-                couponCacheService.cacheCouponCodeMapping(couponCode, couponId);
-
-            }
-
-            Optional<UserCouponIds> cachedUserCoupons = couponCacheService.getCachedUserCouponIds(userId);
-            boolean userHasCoupon = false;
-            if (cachedUserCoupons.isPresent()) {
-                UserCouponClaimInfo userCouponClaimInfo = cachedUserCoupons.get().getCouponClaimInfo(couponId);
-                if (!userHasCoupon) {
-                    return CouponApplicationResult.buildResult(
-                            null,
-                            BigDecimal.valueOf(0),
-                            "Coupon not found for user",
-                            false
-                    );
-                }
-                couponDetail = couponCacheService.getCachedCouponDetail(couponId);
-                if (couponDetail.isEmpty()){
-                    coupon = couponRepository.findById(couponId);
-                    if (coupon.isEmpty()){
-                        return CouponApplicationResult.buildResult(
-                                null,
-                                BigDecimal.valueOf(0),
-                                "Coupon not found for user",
-                                false
-                        );
-                    }
-                    couponDetail = Optional.ofNullable(CouponDetail.fromCoupon(coupon.get()));
-                    couponUser = Optional.ofNullable(CouponUser.buildFromDetailAndClaimInfo(couponDetail.get(), userCouponClaimInfo));
-                }
-            } else {
-                couponUser = couponUserRepository.findByUserIdAndCouponCode(userId, couponCode);
-                if (couponUser.isEmpty()){
-                    return CouponApplicationResult.buildResult(
-                            null,
-                            BigDecimal.valueOf(0),
-                            "Coupon not found for user",
-                            false
-                    );
-                }
-                coupon = Optional.ofNullable(couponUser.get().getCoupon());
-                couponDetail = Optional.ofNullable(CouponDetail.fromCoupon(coupon.get()));
-            }
-            BigDecimal discountAmount = coupon.get().calculateDiscount(orderAmount);
-
-            if (!couponUser.get().isUsable(orderDate)) {
+            Integer couponId = getCouponIdFromCacheOrDB(couponCode);
+            if (couponId == null) {
                 return CouponApplicationResult.buildResult(
-                        couponUser.get(),
-                        discountAmount,
+                        null,
+                        BigDecimal.valueOf(0),
+                        "Coupon not found",
+                        false
+                );
+            }
+
+            CouponUserResult couponUserResult = getCouponUserFromCacheOrDB(userId, couponId, couponCode);
+            if (!couponUserResult.success()) {
+                return CouponApplicationResult.buildResult(
+                        null,
+                        BigDecimal.valueOf(0),
+                        couponUserResult.errorMessage(),
+                        false
+                );
+            }
+
+            CouponUser couponUser = couponUserResult.couponUser();
+            Coupon coupon = couponUserResult.coupon();
+
+            if (!couponUser.isUsable(orderDate)) {
+                return CouponApplicationResult.buildResult(
+                        couponUser,
+                        BigDecimal.valueOf(0),
                         "Coupon is expired or has been used before",
                         false
                 );
             }
 
+            BigDecimal discountAmount = coupon.calculateDiscount(orderAmount);
             if (discountAmount.compareTo(BigDecimal.ZERO) <= 0) {
                 return CouponApplicationResult.failure("No discount applicable for this order amount");
             }
 
-            String requestID = String.valueOf(UUID.randomUUID());
-            Channel channel = grpcClientFactory.getRuleServiceChannel();
-            RuleServiceGrpc.RuleServiceBlockingStub stub = RuleServiceGrpc.newBlockingStub(channel);
-
-            var grpcRequest = RuleServiceProto.EvaluateRuleRequest.newBuilder()
-                    .setRequestId(requestID)
-                    .setUserId(userId)
-                    .setOrderAmount(orderAmount.doubleValue())
-                    .setDiscountAmount(discountAmount.doubleValue())
-                    .setOrderDate(orderDate.toString())
-                    .addAllRuleCollectionIds(List.of(couponDetail.get().getCollectionKeyId()))
-                    .build();
-
-            var grpcResponse = stub.evaluateRuleCollections(grpcRequest);
-
-            if (grpcResponse.getStatus().getCode() != RuleServiceProto.StatusCode.OK) {
-                log.warn("Rule service call failed: userId={}, couponCode={}, status={}, message={}",
-                        userId, couponCode, grpcResponse.getStatus().getCode(), grpcResponse.getStatus().getMessage());
+            if (isCouponExpired(couponUser, coupon, orderDate)) {
                 return CouponApplicationResult.buildResult(
-                        couponUser.get(),
-                        discountAmount,
-                        "Rule evaluation failed: " + grpcResponse.getStatus().getMessage(),
+                        couponUser,
+                        BigDecimal.valueOf(0),
+                        "Coupon is expired",
                         false
                 );
             }
 
-            var payload = grpcResponse.getPayload();
-            boolean allRulesPassed = true;
-            StringBuilder failureReason = new StringBuilder();
-            for (var ruleResult : payload.getRuleCollectionResultsList()) {
-                if (!ruleResult.getIsSuccess()) {
-                    allRulesPassed = false;
-                    if (!failureReason.isEmpty()) {
-                        failureReason.append(", ");
-                    }
-                    failureReason.append("Collection ")
-                               .append(ruleResult.getRuleCollectionId())
-                               .append(": ")
-                               .append(ruleResult.getErrorMessage());
-                }
-            }
-            if (!allRulesPassed) {
-                log.warn("Rule validation failed for coupon application: userId={}, couponCode={}, reasons={}",
-                        userId, couponCode, failureReason.toString());
+            RuleEvaluationResult ruleResult = evaluateRulesForCoupon(couponUser, userId, orderAmount, discountAmount, orderDate);
+            if (!ruleResult.success()) {
                 return CouponApplicationResult.buildResult(
-                        couponUser.get(),
+                        couponUser,
                         discountAmount,
-                        "Rule validation failed: " + failureReason.toString(),
+                        ruleResult.errorMessage(),
                         false
                 );
             }
 
-            log.info("All business rules passed for coupon application: userId={}, couponCode={}", userId, couponCode);
-            couponUser.get().markAsUsed();
-            couponUserRepository.updateStatusUsedByUserIdAndCouponId(userId, couponUser.get().getCouponId());
-            invalidateUserCouponCaches(userId, couponUser.get().getCouponId());
+            couponUser.markAsUsed();
+            updateCouponUserStatus(userId, couponUser.getCouponId());
+            
             log.info("Manual coupon applied successfully: couponId={}, discount={}",
-                    coupon.get().getId(), discountAmount);
+                    coupon.getId(), discountAmount);
             return CouponApplicationResult.buildResult(
-                    couponUser.get(),
+                    couponUser,
                     discountAmount,
                     null,
                     true
@@ -332,81 +285,114 @@ public class CouponService {
         }
     }
 
-    @Observed(name = "apply-coupon-auto", contextualName = "auto-coupon-application")
-    public CouponApplicationResult applyCouponAuto(Integer userId, BigDecimal orderAmount, LocalDateTime orderDate) {
-        log.info("Auto-applying best coupon: userId={}, orderAmount={}", userId, orderAmount);
-
-        try {
-            validateCouponAutoInput(userId, orderAmount);
-
-            List<CouponUser> availableCoupons = getAvailableCouponsFromCacheOrDB(userId);
-            if (availableCoupons.isEmpty()) {
-                return CouponApplicationResult.failure("No available coupons for user");
-            }
-
-            BestCouponResult bestCouponResult = findBestCoupon(availableCoupons, orderAmount, orderDate);
-            if (!bestCouponResult.isFound()) {
-                return CouponApplicationResult.failure(bestCouponResult.getErrorMessage());
-            }
-            RuleEvaluationResult ruleEvaluation = evaluateRulesForCoupon(
-                    bestCouponResult.couponUser(),
-                    userId,
-                    orderAmount,
-                    bestCouponResult.getDiscountAmount(),
-                    orderDate);
-
-            if (!ruleEvaluation.success()) {
-                return CouponApplicationResult.buildResult(
-                        bestCouponResult.couponUser(),
-                        bestCouponResult.getDiscountAmount(),
-                        ruleEvaluation.errorMessage(),
-                        false);
-            }
-
-            return applyCouponAndFinalize(bestCouponResult.couponUser(), bestCouponResult.getDiscountAmount(), userId);
-
-        } catch (Exception e) {
-            log.error("Error auto-applying coupon: userId={}, error={}", userId, e.getMessage(), e);
-            return CouponApplicationResult.failure("Internal error: " + e.getMessage());
-        }
-    }
-
-    private void validateCouponAutoInput(Integer userId, BigDecimal orderAmount) {
-        validator.validateUserId(userId);
-        validator.validateOrderAmount(orderAmount.doubleValue());
-    }
-
-    private BestCouponResult findBestCoupon(List<CouponUser> availableCoupons, BigDecimal orderAmount, LocalDateTime orderDate) {
-        CouponUser bestCoupon = null;
-        BigDecimal bestDiscount = BigDecimal.ZERO;
-        String lastErrorMessage = null;
-
-        Optional<CouponUser> bestCouponOpt = availableCoupons.parallelStream()
-                .filter(couponUser -> {
-                    Coupon coupon = couponUser.getCoupon();
-                    return coupon != null && !isCouponExpired(couponUser, coupon, orderDate);
-                })
-                .map(couponUser -> {
-                    Coupon coupon = couponUser.getCoupon();
-                    BigDecimal discountAmount = coupon.calculateDiscount(orderAmount);
-                    return new CouponDiscountPair(couponUser, discountAmount);
-                })
-                .filter(pair -> pair.discountAmount().compareTo(BigDecimal.ZERO) > 0)
-                .max(Comparator.comparing(CouponDiscountPair::discountAmount))
-                .map(CouponDiscountPair::couponUser);
-
-        if (bestCouponOpt.isPresent()) {
-            bestCoupon = bestCouponOpt.get();
-            bestDiscount = bestCoupon.getCoupon().calculateDiscount(orderAmount);
-        } else {
-            lastErrorMessage = "No applicable discount for order amount";
+    private Integer getCouponIdFromCacheOrDB(String couponCode) {
+        Optional<Integer> couponIdOpt = couponCacheService.getCouponIdByCode(couponCode);
+        if (couponIdOpt.isPresent()) {
+            log.debug("Cache hit for coupon ID: couponCode={}, couponId={}", couponCode, couponIdOpt.get());
+            return couponIdOpt.get();
         }
 
-        return new BestCouponResult(bestCoupon, bestDiscount, lastErrorMessage);
+        Optional<Coupon> coupon = couponRepository.findByCodeIgnoreCase(couponCode);
+        if (coupon.isEmpty()) {
+            log.debug("Coupon not found in database: couponCode={}", couponCode);
+            return null;
+        }
+
+        Integer couponId = coupon.get().getId();
+        couponCacheService.cacheCouponCodeMapping(couponCode, couponId);
+        log.debug("Cache miss for coupon ID: couponCode={}, couponId={} - cached", couponCode, couponId);
+        return couponId;
     }
 
-    private record CouponDiscountPair(CouponUser couponUser, BigDecimal discountAmount) {
+    private CouponUserResult getCouponUserFromCacheOrDB(Integer userId, Integer couponId, String couponCode) {
+        Optional<UserCouponIds> cachedUserCoupons = couponCacheService.getCachedUserCouponIds(userId);
+        if (cachedUserCoupons.isPresent()) {
+            log.debug("Cache UserCouponIds hit for user coupons: userId={}", userId);
+            
+            UserCouponClaimInfo userCouponClaimInfo = cachedUserCoupons.get().getCouponClaimInfo(couponId);
+            if (userCouponClaimInfo == null) {
+                return CouponUserResult.failure("Coupon not found for user");
+            }
+
+            Optional<CouponDetail> couponDetail = couponCacheService.getCachedCouponDetail(couponId);
+            if (couponDetail.isPresent()) {
+                log.debug("Cache hit for coupon detail: couponId={}", couponId);
+                CouponUser couponUser = CouponUser.buildFromDetailAndClaimInfo(couponDetail.get(), userCouponClaimInfo);
+                Coupon coupon = buildCouponFromDetail(couponDetail.get());
+                if (!coupon.getIsActive()){
+                    return CouponUserResult.failure("Coupon not found for user");
+                }
+                return CouponUserResult.success(couponUser, coupon);
+            }
+
+            Optional<Coupon> coupon = couponRepository.findById(couponId);
+            if (coupon.isEmpty()) {
+                return CouponUserResult.failure("Coupon detail not found");
+            }
+
+            CouponDetail couponDetailFromDB = CouponDetail.fromCoupon(coupon.get());
+            couponCacheService.cacheCouponDetail(couponId, couponDetailFromDB);
+
+            if (!couponDetailFromDB.isActive()) {
+                return CouponUserResult.failure("Coupon not found for user");
+            }
+            
+            CouponUser couponUser = CouponUser.buildFromDetailAndClaimInfo(couponDetailFromDB, userCouponClaimInfo);
+            log.debug("Cache miss for coupon detail: couponId={} - cached", couponId);
+            return CouponUserResult.success(couponUser, coupon.get());
+        }
+
+        log.debug("Cache UserCouponIds miss for user coupons: userId={}", userId);
+        Optional<CouponUser> couponUser = couponUserRepository.findByUserIdAndCouponCode(userId, couponCode);
+        if (couponUser.isEmpty()) {
+            return CouponUserResult.failure("Coupon not found for user");
+        }
+
+        CouponUser user = couponUser.get();
+        Coupon coupon = user.getCoupon();
+        if (coupon == null) {
+            return CouponUserResult.failure("Coupon entity is null");
+        }
+
+        CouponDetail couponDetail = CouponDetail.fromCoupon(coupon);
+        couponCacheService.cacheCouponDetail(couponId, couponDetail);
+        
+        Map<Integer, UserCouponClaimInfo> userCouponInfoMap = Map.of(
+            couponId, new UserCouponClaimInfo(user.getUserId(), user.getCouponId(), user.getCreatedAt(), user.getExpiryDate())
+        );
+        UserCouponIds userCouponIdsCache = UserCouponIds.of(userCouponInfoMap);
+        couponCacheService.cacheUserCouponIds(userId, userCouponIdsCache);
+        
+        return CouponUserResult.success(user, coupon);
     }
+
+    private Coupon buildCouponFromDetail(CouponDetail couponDetail) {
+        return Coupon.builder()
+                .id(couponDetail.getCouponId())
+                .collectionKeyId(couponDetail.getCollectionKeyId())
+                .code(couponDetail.getCouponCode())
+                .type(couponDetail.getType())
+                .title(couponDetail.getTitle())
+                .description(couponDetail.getDescription())
+                .discountConfigJson(couponDetail.getDiscountConfigJson())
+                .expiryDate(couponDetail.getExpiryDate())
+                .isActive(couponDetail.isActive())
+                .createdAt(couponDetail.getCreatedAt())
+                .updatedAt(couponDetail.getUpdatedAt())
+                .build();
+    }
+
+        private record CouponUserResult(boolean success, CouponUser couponUser, Coupon coupon, String errorMessage) {
+
+        public static CouponUserResult success(CouponUser couponUser, Coupon coupon) {
+                return new CouponUserResult(true, couponUser, coupon, null);
+            }
+
+            public static CouponUserResult failure(String errorMessage) {
+                return new CouponUserResult(false, null, null, errorMessage);
+            }
+
+        }
 
     private boolean isCouponExpired(CouponUser couponUser, Coupon coupon, LocalDateTime orderDate) {
         return (couponUser.getExpiryDate() != null && couponUser.getExpiryDate().isBefore(orderDate)) ||
@@ -425,6 +411,10 @@ public class CouponService {
             Optional<CouponDetail> cachedCouponDetail = getCouponDetailByCode(couponUser.getCoupon().getCode());
             if (cachedCouponDetail.isEmpty()) {
                 return new RuleEvaluationResult(false, "Coupon detail not found for rule evaluation");
+            }
+
+            if (cachedCouponDetail.get().getCollectionKeyId() == 0){
+                return new RuleEvaluationResult(true, null);
             }
 
             var grpcRequest = RuleServiceProto.EvaluateRuleRequest.newBuilder()
@@ -464,55 +454,25 @@ public class CouponService {
                 if (!failureReason.isEmpty()) {
                     failureReason.append(", ");
                 }
-                failureReason.append("Collection ")
-                           .append(ruleResult.getRuleCollectionId())
-                           .append(": ")
-                           .append(ruleResult.getErrorMessage());
+                failureReason.append(ruleResult.getErrorMessage());
             }
         }
 
         if (!allRulesPassed) {
             log.warn("Rule validation failed for auto coupon application: userId={}, couponCode={}, reasons={}",
                     userId, couponCode, failureReason.toString());
-            return new RuleEvaluationResult(false, "Rule validation failed: " + failureReason.toString());
+            return new RuleEvaluationResult(false, "Lỗi xảy ra: " + failureReason.toString());
         }
 
         log.info("All business rules passed for auto coupon application: userId={}, couponCode={}", userId, couponCode);
         return new RuleEvaluationResult(true, null);
     }
 
-    private CouponApplicationResult applyCouponAndFinalize(CouponUser couponUser, BigDecimal discountAmount, Integer userId) {
-        // Mark coupon as used and save
-        couponUser.markAsUsed();
-        couponUserRepository.save(couponUser);
-
-        // Invalidate caches
-        invalidateUserCouponCaches(userId, couponUser.getCouponId());
-
-        log.info("Auto coupon applied successfully: couponId={}, discount={}",
-                couponUser.getCouponId(), discountAmount);
-
-        return CouponApplicationResult.buildResult(couponUser, discountAmount, null, true);
-    }
-
-    private record BestCouponResult(CouponUser couponUser, BigDecimal discountAmount, String errorMessage) {
-        public boolean isFound() {
-            return couponUser != null;
-        }
-
-        public BigDecimal getDiscountAmount() {
-            return discountAmount != null ? discountAmount : BigDecimal.ZERO;
-        }
-
-        public String getErrorMessage() {
-            return errorMessage != null ? errorMessage : "No applicable coupon found";
-        }
-    }
-
     private record RuleEvaluationResult(boolean success, String errorMessage) {
     }
 
     @Observed(name = "apply-coupon-auto-parallel", contextualName = "parallel-auto-coupon-application")
+    @PerformanceMonitor
     public CompletableFuture<CouponApplicationResult> applyCouponAutoParallel(Integer userId, BigDecimal orderAmount, LocalDateTime orderDate) {
         log.info("Auto-applying best coupon (parallel): userId={}, orderAmount={}", userId, orderAmount);
 
@@ -521,31 +481,7 @@ public class CouponService {
                 validator.validateUserId(userId);
                 validator.validateOrderAmount(orderAmount.doubleValue());
 
-                // Use enhanced cache logic with parallel processing
-                List<CouponUser> availableCoupons = new ArrayList<>();
-
-                Optional<UserCouponIds> cachedUserCoupons = couponCacheService.getCachedUserCouponIds(userId);
-                if (cachedUserCoupons.isPresent()) {
-                    log.debug("Cache hit for user coupons: userId={}", userId);
-
-                    // OPTIMIZED: Parallel processing for cache-based coupon building
-                    List<UserCouponClaimInfo> userCouponClaimInfos = cachedUserCoupons.get().getCouponDetails();
-
-                    List<CouponUser> cachedCoupons = userCouponClaimInfos.parallelStream()
-                            .map(claimInfo -> buildCouponUserFromCache(claimInfo))
-                            .filter(Optional::isPresent)
-                            .map(Optional::get)
-                            .filter(couponUser -> couponUser.isUsable(LocalDateTime.now()))
-                            .toList();
-
-                    availableCoupons.addAll(cachedCoupons);
-
-                } else {
-                    log.debug("Cache miss for user coupons: userId={}", userId);
-                    // Fallback to optimized DB query with parallel caching
-                    availableCoupons = loadAndCacheAvailableCoupons(userId);
-                }
-
+                List<CouponUser> availableCoupons = getAvailableCouponsForUser(userId);
                 if (availableCoupons.isEmpty()) {
                     return CouponApplicationResult.failure("No available coupons for user");
                 }
@@ -555,8 +491,7 @@ public class CouponService {
                             Coupon coupon = couponUser.getCoupon();
                             if (coupon == null) return false;
 
-                            return !((couponUser.getExpiryDate() != null && couponUser.getExpiryDate().isBefore(orderDate)) ||
-                                    (coupon.getExpiryDate() != null && coupon.getExpiryDate().isBefore(orderDate)));
+                            return !isCouponExpired(couponUser, coupon, orderDate);
                         })
                         .toList();
 
@@ -584,10 +519,7 @@ public class CouponService {
                     CouponUser bestCoupon = bestResult.couponUser();
                     BigDecimal bestDiscount = bestResult.discountAmount();
 
-                    couponUserRepository.updateStatusUsedByUserIdAndCouponId(bestCoupon.getUserId(), bestCoupon.getCouponId());
-
-                    invalidateUserCouponCaches(userId, bestCoupon.getCouponId());
-                    log.info("Parallel auto coupon applied successfully: couponId={}, discount={}",
+                    log.info("Parallel auto coupon evaluation completed: couponId={}, discount={}",
                             bestCoupon.getCouponId(), bestDiscount);
                     return CouponApplicationResult.buildResult(
                             bestCoupon,
@@ -606,6 +538,7 @@ public class CouponService {
         }, couponEvaluationExecutor);
     }
 
+    @PerformanceMonitor
     private CompletableFuture<CouponWithRuleEvaluationResult> evaluateCouponWithRulesAsync(
             CouponUser couponUser, BigDecimal orderAmount, Integer userId, LocalDateTime orderDate) {
 
@@ -705,9 +638,19 @@ public class CouponService {
     ) {}
 
     @Observed(name = "apply-coupon-auto-parallel-sync", contextualName = "parallel-auto-coupon-application-sync")
+    @Transactional(rollbackFor = Exception.class)
     public CouponApplicationResult applyCouponAutoParallelSync(Integer userId, BigDecimal orderAmount, LocalDateTime orderDate) {
         try {
-            return applyCouponAutoParallel(userId, orderAmount, orderDate).get();
+            CouponApplicationResult result = applyCouponAutoParallel(userId, orderAmount, orderDate).get();
+            
+            if (result.isSuccess() && result.getCouponId() != null) {
+                updateCouponUserStatus(userId, result.getCouponId());
+                
+                log.info("Parallel auto coupon applied successfully: couponId={}, discount={}",
+                        result.getCouponId(), result.getDiscountAmount());
+            }
+            
+            return result;
         } catch (Exception e) {
             log.error("Error in parallel sync auto-applying coupon: userId={}, error={}", userId, e.getMessage(), e);
             return CouponApplicationResult.failure("Internal error: " + e.getMessage());
@@ -720,9 +663,47 @@ public class CouponService {
         log.debug("Invalidated caches for userId={}, couponId={}", userId, couponId);
     }
 
+    private void executeUnderLock(Integer userId, Integer couponId, Runnable operation) {
+        RedisLockService.LockResult lockResult = null;
+        
+        try {
+            lockResult = redisLockService.acquireCouponUserLock(userId, couponId);
+            if (!lockResult.acquired()) {
+                log.warn("Lock already held - operation rejected: userId={}, couponId={}, error={}", 
+                    userId, couponId, lockResult.errorMessage());
+                throw new RuntimeException("Operation rejected - coupon is being processed by another request: " + lockResult.errorMessage());
+            }
+            log.debug("Lock acquired for operation: userId={}, couponId={}, lockId={}", 
+                userId, couponId, lockResult.lockId());
+            operation.run();
+        } catch (Exception e) {
+            log.error("Error executing operation under lock: userId={}, couponId={}, error={}", 
+                userId, couponId, e.getMessage(), e);
+            throw e;
+        } finally {
+            if (lockResult != null && lockResult.acquired()) {
+                boolean released = redisLockService.releaseLock(lockResult);
+                if (released) {
+                    log.debug("Lock released for operation: userId={}, couponId={}", userId, couponId);
+                } else {
+                    log.warn("Failed to release lock for operation: userId={}, couponId={}", userId, couponId);
+                }
+            }
+        }
+    }
+
+    @Transactional
+    public void updateCouponUserStatus(Integer userId, Integer couponId) {
+        executeUnderLock(userId, couponId, () -> {
+            couponUserRepository.updateStatusUsedByUserIdAndCouponId(userId, couponId);
+            invalidateUserCouponCaches(userId, couponId);
+            log.debug("Updated coupon user status under lock: userId={}, couponId={}", userId, couponId);
+        });
+    }
+
     @Observed(name = "list-coupons", contextualName = "coupons-listing")
-    public CouponsListResult listCoupons(int page, int size, String status) {
-        log.info("Listing coupons: page={}, size={}, status={}", page, size, status);
+    public CouponsListResult listCoupons(int page, int size) {
+        log.info("Listing coupons: page={}, size={}", page, size);
 
         try {
             Pageable pageable = PageRequest.of(page, size);
@@ -737,8 +718,7 @@ public class CouponService {
                     couponDetails,
                     couponPage.getTotalElements(),
                     page,
-                    size,
-                    status
+                    size
             );
 
             log.info("Coupons listed from database: totalCount={}, page={}, size={}",
@@ -747,8 +727,8 @@ public class CouponService {
             return result;
 
         } catch (Exception e) {
-            log.error("Error listing coupons: page={}, size={}, status={}, error={}",
-                     page, size, status, e.getMessage(), e);
+            log.error("Error listing coupons: page={}, size={}, error={}",
+                     page, size, e.getMessage(), e);
             throw new RuntimeException("Failed to list coupons: " + e.getMessage(), e);
         }
     }
@@ -757,70 +737,10 @@ public class CouponService {
             List<CouponDetail> couponDetails,
             long totalCount,
             int page,
-            int size,
-            String status
+            int size
     ) {}
 
-    private List<CouponUser> getAvailableCouponsFromCacheOrDB(Integer userId) {
-        List<CouponUser> availableCoupons = new ArrayList<>();
 
-        Optional<UserCouponIds> cachedUserCoupons = couponCacheService.getCachedUserCouponIds(userId);
-        if (cachedUserCoupons.isPresent()) {
-            log.debug("Cache hit for user coupons: userId={}", userId);
-
-            List<UserCouponClaimInfo> userCouponClaimInfos = cachedUserCoupons.get().getCouponDetails();
-
-            for (UserCouponClaimInfo claimInfo : userCouponClaimInfos) {
-                Optional<CouponDetail> couponDetail = couponCacheService.getCachedCouponDetail(claimInfo.getCouponId());
-
-                if (couponDetail.isPresent()) {
-                    CouponUser couponUser = CouponUser.buildFromDetailAndClaimInfo(couponDetail.get(), claimInfo);
-                    if (couponUser.isUsable(LocalDateTime.now())) {
-                        availableCoupons.add(couponUser);
-                    }
-                } else {
-                    Optional<Coupon> coupon = couponRepository.findById(claimInfo.getCouponId());
-                    if (coupon.isPresent()) {
-                        CouponDetail detail = CouponDetail.fromCoupon(coupon.get());
-                        couponCacheService.cacheCouponDetail(claimInfo.getCouponId(), detail);
-
-                        CouponUser couponUser = CouponUser.buildFromDetailAndClaimInfo(detail, claimInfo);
-                        if (couponUser.isUsable(LocalDateTime.now())) {
-                            availableCoupons.add(couponUser);
-                        }
-                    }
-                }
-            }
-        } else {
-            log.debug("Cache miss for user coupons: userId={}", userId);
-            availableCoupons = couponUserRepository.findAvailableCouponsByUserId(userId);
-
-            if (!availableCoupons.isEmpty()) {
-                Map<Integer, UserCouponClaimInfo> userCouponInfoMap = availableCoupons.stream()
-                        .collect(Collectors.toMap(
-                                CouponUser::getCouponId,
-                                cu -> new UserCouponClaimInfo(
-                                        cu.getUserId(),
-                                        cu.getCouponId(),
-                                        cu.getCreatedAt(),
-                                        cu.getExpiryDate()
-                                )
-                        ));
-
-                UserCouponIds userCouponIdsCache = UserCouponIds.of(userCouponInfoMap);
-                couponCacheService.cacheUserCouponIds(userId, userCouponIdsCache);
-
-                availableCoupons.parallelStream().forEach(couponUser -> {
-                    if (couponUser.getCoupon() != null) {
-                        CouponDetail couponDetail = CouponDetail.fromCoupon(couponUser.getCoupon());
-                        couponCacheService.cacheCouponDetail(couponUser.getCouponId(), couponDetail);
-                    }
-                });
-            }
-        }
-
-        return availableCoupons;
-    }
 
 
     private Optional<CouponDetail> getCouponDetailByCode(String couponCode) {
@@ -849,21 +769,73 @@ public class CouponService {
             Map<Integer, CouponDetail> couponDetailMap
     ) {}
 
-    private Optional<CouponUser> buildCouponUserFromCache(UserCouponClaimInfo claimInfo) {
-        Optional<CouponDetail> couponDetail = couponCacheService.getCachedCouponDetail(claimInfo.getCouponId());
 
-        if (couponDetail.isPresent()) {
-            return Optional.of(CouponUser.buildFromDetailAndClaimInfo(couponDetail.get(), claimInfo));
-        } else {
-            return Optional.empty();
+
+    private List<CouponUser> getAvailableCouponsForUser(Integer userId) {
+        Optional<UserCouponIds> cachedUserCoupons = couponCacheService.getCachedUserCouponIds(userId);
+        if (cachedUserCoupons.isPresent()) {
+            log.debug("Cache hit for user coupons: userId={}", userId);
+            return buildCouponUsersFromCache(cachedUserCoupons.get());
         }
+
+        log.debug("Cache miss for user coupons: userId={}", userId);
+        return loadAndCacheAvailableCouponsOptimized(userId);
     }
 
-    private List<CouponUser> loadAndCacheAvailableCoupons(Integer userId) {
+    private List<CouponUser> buildCouponUsersFromCache(UserCouponIds cachedUserCoupons) {
+        List<UserCouponClaimInfo> userCouponClaimInfos = cachedUserCoupons.getCouponDetails();
+        
+        List<Integer> couponIds = userCouponClaimInfos.stream()
+                .map(UserCouponClaimInfo::getCouponId)
+                .toList();
+
+        Map<Integer, CouponDetail> cachedCouponDetails = couponCacheService.getCachedCouponDetailsBatch(couponIds);
+        
+        List<Integer> missingCouponIds = couponIds.stream()
+                .filter(id -> !cachedCouponDetails.containsKey(id))
+                .toList();
+
+        if (!missingCouponIds.isEmpty()) {
+            log.debug("Cache miss for some coupon details: missingCount={}", missingCouponIds.size());
+            Map<Integer, CouponDetail> missingCouponDetails = loadMissingCouponDetails(missingCouponIds);
+            cachedCouponDetails.putAll(missingCouponDetails);
+        }
+
+        return userCouponClaimInfos.parallelStream()
+                .map(claimInfo -> {
+                    CouponDetail couponDetail = cachedCouponDetails.get(claimInfo.getCouponId());
+                    if (couponDetail != null) {
+                        return CouponUser.buildFromDetailAndClaimInfo(couponDetail, claimInfo);
+                    }
+                    return null;
+                })
+                .filter(Objects::nonNull)
+                .filter(couponUser -> couponUser.isUsable(LocalDateTime.now()))
+                .toList();
+    }
+
+    private Map<Integer, CouponDetail> loadMissingCouponDetails(List<Integer> missingCouponIds) {
+        Map<Integer, CouponDetail> missingCouponDetails = new HashMap<>();
+        
+        List<Coupon> missingCoupons = missingCouponIds.parallelStream()
+                .map(couponRepository::findById)
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .toList();
+
+        missingCoupons.parallelStream().forEach(coupon -> {
+            CouponDetail couponDetail = CouponDetail.fromCoupon(coupon);
+            missingCouponDetails.put(coupon.getId(), couponDetail);
+            couponCacheService.cacheCouponDetail(coupon.getId(), couponDetail);
+        });
+
+        return missingCouponDetails;
+    }
+
+    private List<CouponUser> loadAndCacheAvailableCouponsOptimized(Integer userId) {
         List<CouponUser> availableCoupons = couponUserRepository.findAvailableCouponsByUserId(userId);
 
         if (!availableCoupons.isEmpty()) {
-            // Cache the results for next time
             Map<Integer, UserCouponClaimInfo> userCouponInfoMap = availableCoupons.stream()
                     .collect(Collectors.toMap(
                             CouponUser::getCouponId,
@@ -878,7 +850,6 @@ public class CouponService {
             UserCouponIds userCouponIdsCache = UserCouponIds.of(userCouponInfoMap);
             couponCacheService.cacheUserCouponIds(userId, userCouponIdsCache);
 
-            // Cache coupon details as well
             availableCoupons.parallelStream().forEach(couponUser -> {
                 if (couponUser.getCoupon() != null) {
                     CouponDetail couponDetail = CouponDetail.fromCoupon(couponUser.getCoupon());

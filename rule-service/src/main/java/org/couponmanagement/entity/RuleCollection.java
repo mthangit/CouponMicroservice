@@ -48,7 +48,6 @@ public class RuleCollection {
         updatedAt = LocalDateTime.now();
     }
     
-    // Helper methods to work with JSON rule_ids
     public List<Integer> getRuleIdsList() {
         if (ruleIds == null || ruleIds.trim().isEmpty()) {
             return new ArrayList<>();

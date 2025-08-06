@@ -25,6 +25,7 @@ public class CouponCacheService {
                 userId, userCouponIds.getUserCouponInfo().size(), cacheProperties.getUserCouponsTtlSeconds());
     }
 
+    @PerformanceMonitor
     public Optional<UserCouponIds> getCachedUserCouponIds(Integer userId) {
         String key = cacheProperties.getUserCouponIdsKey(userId);
         Optional<UserCouponIds> result = cacheService.get(key, UserCouponIds.class);

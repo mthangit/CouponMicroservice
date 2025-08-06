@@ -7,10 +7,6 @@ import org.couponmanagement.security.JwtService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-/**
- * Authentication controller for JWT token generation and validation
- * This is for testing purposes - in production, authentication would be handled by a separate service
- */
 @RestController
 @RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
@@ -45,10 +41,6 @@ public class AuthController {
         }
     }
     
-    /**
-     * Validate JWT token
-     * POST /api/v1/auth/validate
-     */
     @PostMapping("/validate")
     public ResponseEntity<ValidateTokenResponse> validateToken(@Valid @RequestBody ValidateTokenRequest request) {
         log.info("Token validation request");
@@ -75,10 +67,6 @@ public class AuthController {
         }
     }
     
-    /**
-     * Get user profile from JWT token
-     * GET /api/v1/auth/profile
-     */
     @GetMapping("/profile")
     public ResponseEntity<UserProfileResponse> getUserProfile(@RequestHeader("Authorization") String authHeader) {
         log.info("Get user profile request");

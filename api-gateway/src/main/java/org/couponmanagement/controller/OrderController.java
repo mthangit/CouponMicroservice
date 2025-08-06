@@ -1,5 +1,6 @@
 package org.couponmanagement.controller;
 
+import io.micrometer.observation.annotation.Observed;
 import jakarta.validation.Valid;
 import org.couponmanagement.dto.ProcessOrderRequest;
 import org.couponmanagement.dto.response.ProcessOrderResponse;
@@ -22,6 +23,7 @@ public class OrderController {
     private OrderServiceClient orderServiceClient;
 
     @PostMapping("/process")
+    @Observed(name = "process-order", contextualName = "order-processing")
     @PerformanceMonitor
     public ResponseEntity<?> processOrder(@Valid @RequestBody ProcessOrderRequest request) {
         try {

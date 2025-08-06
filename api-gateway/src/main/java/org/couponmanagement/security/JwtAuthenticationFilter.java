@@ -86,10 +86,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             
             authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
             
-            // Set authentication in security context
             SecurityContextHolder.getContext().setAuthentication(authentication);
             
-            // Add user info to request attributes for easy access
             request.setAttribute("userId", userInfo.getUserId());
             request.setAttribute("username", userInfo.getUsername());
             request.setAttribute("userInfo", userInfo);
@@ -130,12 +128,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     }
                 });
     }
-    
-    public static Integer getAuthenticatedUserId(HttpServletRequest request) {
-        Object userId = request.getAttribute("userId");
-        return userId instanceof Integer ? (Integer) userId : null;
-    }
-    
+
     public static JwtService.UserInfo getAuthenticatedUserInfo(HttpServletRequest request) {
         Object userInfo = request.getAttribute("userInfo");
         return userInfo instanceof JwtService.UserInfo ? (JwtService.UserInfo) userInfo : null;

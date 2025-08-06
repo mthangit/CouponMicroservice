@@ -36,15 +36,6 @@ public class CustomMetricsRegistry {
                 .increment();
     }
 
-    public void recordMemoryUsage(String methodName, String className, long memoryBytes) {
-        DistributionSummary.builder("method_memory_bytes")
-                .description("Memory used by method in bytes")
-                .tag("class", className)
-                .tag("method", methodName)
-                .register(meterRegistry)
-                .record(memoryBytes);
-    }
-
     public void recordCpuUsage(String methodName, String className, double cpuPercent) {
         Gauge.builder("method_cpu_usage_percent", () -> cpuPercent)
                 .description("CPU usage percentage for method")

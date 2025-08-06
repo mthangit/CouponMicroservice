@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!-- Properties -->
+    <springProfile name="!production">
+        <property name="LOG_LEVEL" value="DEBUG"/>
+    </springProfile>
+    <springProfile name="production">
+        <property name="LOG_LEVEL" value="INFO"/>
+    </springProfile>
+
+    <!-- Console Appender (giữ nguyên) -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %highlight(%-5level) [%blue(%thread)] %yellow([%X{traceId:-},%X{spanId:-}]) %green(%logger{36}) - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Logstash TCP Appender -->
+    <appender name="LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
+        <destination>localhost:5050</destination>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>
+                {
+                "service": "${spring.application.name:-rule-service}",
+                "pod": "${HOSTNAME:-localhost}"
+                }
+            </customFields>
+        </encoder>
+    </appender>
+
+    <!-- Logger configurations -->x
+    <logger name="org.couponmanagement" level="${LOG_LEVEL}" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="LOGSTASH"/>
+    </logger>
+
+    <!-- Performance logger -->
+    <logger name="org.couponmanagement.performance" level="INFO" additivity="false">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="LOGSTASH"/>
+    </logger>
+
+    <!-- Spring Boot loggers -->
+    <logger name="org.springframework.web" level="INFO"/>
+    <logger name="org.springframework.security" level="WARN"/>
+    <logger name="net.devh.boot.grpc" level="INFO"/>
+    <logger name="org.hibernate.SQL" level="DEBUG"/>
+    <logger name="org.hibernate.type.descriptor.sql.BasicBinder" level="TRACE"/>
+
+    <!-- Root logger -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="LOGSTASH"/>
+    </root>
+
+    <shutdownHook class="ch.qos.logback.core.hook.DelayingShutdownHook"/>
+</configuration>

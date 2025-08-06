@@ -1,6 +1,7 @@
 package org.couponmanagement.grpc;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.protobuf.Value;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.observation.annotation.Observed;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ import org.couponmanagement.repository.RuleCollectionRepository;
 import org.couponmanagement.repository.RuleRepository;
 import org.couponmanagement.entity.RuleCollection;
 import org.couponmanagement.entity.Rule;
+import org.couponmanagement.validation.RuleConfigValidator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
@@ -34,6 +36,7 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
 
     private final RuleEvaluationService ruleEvaluationService;
     private final RequestValidator validator;
+    private final RuleConfigValidator ruleConfigValidator;
 
     @Autowired
     private RuleCollectionRepository ruleCollectionRepository;
@@ -48,10 +51,16 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
     @Observed(name = "evaluate-rule-collections")
     public void evaluateRuleCollections(RuleServiceProto.EvaluateRuleRequest request,
                                        StreamObserver<RuleServiceProto.EvaluateRuleResponse> responseObserver) {
-        log.info("Received gRPC request: requestId={}, userId={}, collectionIds={}, orderAmount={}",
+        // Add multiple log levels to test
+        System.out.println("=== gRPC method called - System.out.println ===");
+        log.error("ERROR level: Received gRPC request - this should always show");
+        log.warn("WARN level: Received gRPC request - this should show");
+        log.info("INFO level: Received gRPC request: requestId={}, userId={}, collectionIds={}, orderAmount={}",
                 request.getRequestId(), request.getUserId(), request.getRuleCollectionIdsList(), request.getOrderAmount());
+        log.debug("DEBUG level: Processing gRPC request with details");
 
         try {
+            log.info("Starting validation...");
             validator.validateRequestId(request.getRequestId());
             validator.validateUserId(request.getUserId());
             validator.validateCollectionIds(request.getRuleCollectionIdsList());
@@ -70,17 +79,16 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
             );
 
             List<RuleEvaluationService.RuleCollectionEvaluationResult> evalResults =
-                    ruleEvaluationService.evaluateMultipleCollections(request.getRuleCollectionIdsList(), context);
+                    ruleEvaluationService.evaluateMultipleCollections(request.getRuleCollectionIdsList().getFirst(), context);
 
-            List<RuleServiceProto.RuleCollectionResult> results = new ArrayList<>();
-            for (RuleEvaluationService.RuleCollectionEvaluationResult evalResult : evalResults) {
-                RuleServiceProto.RuleCollectionResult grpcResult = RuleServiceProto.RuleCollectionResult.newBuilder()
-                        .setRuleCollectionId(evalResult.collectionId())
-                        .setIsSuccess(evalResult.success())
-                        .setErrorMessage(evalResult.errorMessage() != null ? evalResult.errorMessage() : "")
-                        .build();
-                results.add(grpcResult);
-            }
+            List<RuleServiceProto.RuleCollectionResult> results = new ArrayList<>(evalResults.stream()
+                    .filter(r -> !r.success())
+                    .map(r -> RuleServiceProto.RuleCollectionResult.newBuilder()
+                            .setRuleCollectionId(r.collectionId())
+                            .setIsSuccess(false)
+                            .setErrorMessage(r.errorMessage() != null ? r.errorMessage() : "")
+                            .build())
+                    .toList());
 
             RuleServiceProto.EvaluateRuleResponsePayload payload = RuleServiceProto.EvaluateRuleResponsePayload.newBuilder()
                     .setRequestId(request.getRequestId())
@@ -175,7 +183,6 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                 return;
             }
 
-            // Load rules from rule IDs
             List<RuleServiceProto.RuleInfo> ruleInfos = new ArrayList<>();
             List<Integer> ruleIdsList = collection.getRuleIdsList();
             if (!ruleIdsList.isEmpty()) {
@@ -194,7 +201,6 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                 }
             }
 
-            // Build response payload
             RuleServiceProto.GetRuleCollectionResponsePayload payload =
                     RuleServiceProto.GetRuleCollectionResponsePayload.newBuilder()
                             .setCollectionId(collection.getId())
@@ -248,7 +254,7 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
 
     @Override
     @RequireAuth("MANAGE_RULES")
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void modifyRule(
             RuleServiceProto.ModifyRuleRequest request,
             StreamObserver<RuleServiceProto.ModifyRuleResponse> responseObserver) {
@@ -280,15 +286,12 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                 return;
             }
 
-            // Update fields using custom query
             String ruleConfigJson = null;
             if (request.hasRuleConfig() && request.getRuleConfig().getConfigCount() > 0) {
-                // Convert protobuf Struct to JSON string
                 try {
                     var configMap = request.getRuleConfig().getConfigMap();
-                    // Convert protobuf Values to plain Java objects to avoid circular reference
                     Map<String, Object> plainConfigMap = new HashMap<>();
-                    for (Map.Entry<String, com.google.protobuf.Value> entry : configMap.entrySet()) {
+                    for (Map.Entry<String, Value> entry : configMap.entrySet()) {
                         plainConfigMap.put(entry.getKey(), convertProtobufValueToJavaObject(entry.getValue()));
                     }
 
@@ -314,57 +317,55 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                 }
             }
 
-            // Use custom query to update only non-null fields
             String description = request.getDescription().isEmpty() ? null : request.getDescription();
             String ruleType = request.getRuleType().isEmpty() ? null : request.getRuleType();
+
+            if (ruleType != null && ruleConfigJson != null) {
+                RuleConfigValidator.ValidationResult validationResult =
+                    ruleConfigValidator.validateRuleConfig(ruleType, ruleConfigJson);
+
+                if (!validationResult.valid()) {
+                    log.error("Rule configuration validation failed: {}", validationResult.errorMessage());
+                    var errorStatus = RuleServiceProto.Status.newBuilder()
+                            .setCode(RuleServiceProto.StatusCode.INVALID_ARGUMENT)
+                            .setMessage("Invalid rule configuration")
+                            .build();
+                    var error = RuleServiceProto.Error.newBuilder()
+                            .setCode("INVALID_RULE_CONFIG")
+                            .setMessage(validationResult.errorMessage())
+                            .build();
+                    var errorResponse = RuleServiceProto.ModifyRuleResponse.newBuilder()
+                            .setStatus(errorStatus)
+                            .setError(error)
+                            .build();
+                    responseObserver.onNext(errorResponse);
+                    responseObserver.onCompleted();
+                    return;
+                }
+            }
 
             int updatedRows = ruleRepository.updateRuleSelectively(
                     request.getRuleId(),
                     description,
                     ruleType,
                     ruleConfigJson,
-                    request.getIsActive(),
-                    LocalDateTime.now()
+                    request.getIsActive()
             );
 
             if (updatedRows == 0) {
-                var errorStatus = RuleServiceProto.Status.newBuilder()
-                        .setCode(RuleServiceProto.StatusCode.INTERNAL)
-                        .setMessage("Failed to update rule")
-                        .build();
-                var error = RuleServiceProto.Error.newBuilder()
-                        .setCode("UPDATE_FAILED")
-                        .setMessage("No rows were updated for rule ID " + request.getRuleId())
-                        .build();
-                var errorResponse = RuleServiceProto.ModifyRuleResponse.newBuilder()
-                        .setStatus(errorStatus)
-                        .setError(error)
-                        .build();
-                responseObserver.onNext(errorResponse);
-                responseObserver.onCompleted();
-                return;
+                log.error("No rows were updated for rule ID {}", request.getRuleId());
+                throw new Exception("No rows were updated for rule ID " + request.getRuleId());
             }
 
             Rule updatedRule = ruleRepository.findById(request.getRuleId()).orElse(null);
             if (updatedRule == null) {
                 log.error("Rule not found after update: {}", request.getRuleId());
-                var errorStatus = RuleServiceProto.Status.newBuilder()
-                        .setCode(RuleServiceProto.StatusCode.INTERNAL)
-                        .setMessage("Rule not found after update")
-                        .build();
-                var errorResponse = RuleServiceProto.ModifyRuleResponse.newBuilder()
-                        .setStatus(errorStatus)
-                        .build();
-                responseObserver.onNext(errorResponse);
-                responseObserver.onCompleted();
-                return;
+                throw new Exception("Rule not found after update: " + request.getRuleId());
             }
 
-            // Cache updated rule config
             ruleCacheService.cacheRuleConfig(updatedRule.getId(),
                     RuleCacheService.RuleConfigCacheInfo.fromRule(updatedRule));
 
-            // Build response
             var response = RuleServiceProto.ModifyRuleResponse.newBuilder()
                     .setStatus(RuleServiceProto.Status.newBuilder()
                             .setCode(RuleServiceProto.StatusCode.OK)
@@ -398,7 +399,7 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                             .setMessage("Internal server error")
                             .build())
                     .setError(RuleServiceProto.Error.newBuilder()
-                            .setCode("UPDATE_RULE_ERROR")
+                            .setCode("UPDATE_FAILED")
                             .setMessage(e.getMessage())
                             .build())
                     .build();
@@ -490,7 +491,8 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
             List<RuleServiceProto.RuleCollectionSummary> summaries = new ArrayList<>();
             for (RuleCollection rc : collections) {
                 summaries.add(RuleServiceProto.RuleCollectionSummary.newBuilder()
-                        .addCollectionId(rc.getId())
+                        .setCollectionId(rc.getId())
+                        .addAllRuleIds(rc.getRuleIdsList())
                         .setName(rc.getName())
                         .setDescription("")
                         .setIsActive(true)
@@ -531,7 +533,7 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
 
     @Override
     @RequireAuth("MANAGE_RULES")
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void modifyRuleCollection(
             RuleServiceProto.ModifyRuleCollectionRequest request,
             StreamObserver<RuleServiceProto.ModifyRuleCollectionResponse> responseObserver) {
@@ -555,6 +557,61 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                 responseObserver.onCompleted();
                 return;
             }
+
+            if (!request.getRuleIdsList().isEmpty()) {
+                List<Rule> rules = ruleRepository.findByIdIn(request.getRuleIdsList());
+                
+                if (rules.size() != request.getRuleIdsList().size()) {
+                    var errorStatus = RuleServiceProto.Status.newBuilder()
+                            .setCode(RuleServiceProto.StatusCode.INVALID_ARGUMENT)
+                            .setMessage("Some rule IDs do not exist")
+                            .build();
+                    var error = RuleServiceProto.Error.newBuilder()
+                            .setCode("INVALID_RULE_IDS")
+                            .setMessage("One or more rule IDs in the list do not exist")
+                            .build();
+                    var errorResponse = RuleServiceProto.ModifyRuleCollectionResponse.newBuilder()
+                            .setStatus(errorStatus)
+                            .setError(error)
+                            .build();
+                    responseObserver.onNext(errorResponse);
+                    responseObserver.onCompleted();
+                    return;
+                }
+                
+                Map<String, List<Integer>> typeToRuleIds = new HashMap<>();
+                for (Rule rule : rules) {
+                    String ruleType = rule.getType();
+                    if (ruleType != null) {
+                        typeToRuleIds.computeIfAbsent(ruleType, k -> new ArrayList<>()).add(rule.getId());
+                    }
+                }
+                
+                List<String> duplicateTypes = typeToRuleIds.entrySet().stream()
+                        .filter(entry -> entry.getValue().size() > 1)
+                        .map(Map.Entry::getKey)
+                        .toList();
+                
+                if (!duplicateTypes.isEmpty()) {
+                    String duplicateTypeNames = String.join(", ", duplicateTypes);
+                    var errorStatus = RuleServiceProto.Status.newBuilder()
+                            .setCode(RuleServiceProto.StatusCode.INVALID_ARGUMENT)
+                            .setMessage("Duplicate rule types found in collection")
+                            .build();
+                    var error = RuleServiceProto.Error.newBuilder()
+                            .setCode("DUPLICATE_RULE_TYPES")
+                            .setMessage("Rule collection cannot contain multiple rules of the same type: " + duplicateTypeNames)
+                            .build();
+                    var errorResponse = RuleServiceProto.ModifyRuleCollectionResponse.newBuilder()
+                            .setStatus(errorStatus)
+                            .setError(error)
+                            .build();
+                    responseObserver.onNext(errorResponse);
+                    responseObserver.onCompleted();
+                    return;
+                }
+            }
+
             collection.setName(request.getName());
             collection.setRuleIdsList(request.getRuleIdsList());
             collection.setUpdatedAt(LocalDateTime.now());
@@ -566,20 +623,16 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                 try {
                     List<Rule> updatedRules = ruleRepository.findByIdIn(request.getRuleIdsList());
 
-                    List<Rule> activeRules = updatedRules.stream()
-                            .filter(rule -> Boolean.TRUE.equals(rule.getIsActive()))
-                            .toList();
+                    for (Rule rule : updatedRules) {
+                        RuleCacheService.RuleConfigCacheInfo ruleInfo = 
+                            RuleCacheService.RuleConfigCacheInfo.fromRule(rule);
+                        ruleCacheService.cacheRuleConfig(rule.getId(), ruleInfo);
+                    }
 
-                    RuleCacheService.RuleCollectionWithRulesCacheInfo updatedCacheInfo =
-                        RuleCacheService.RuleCollectionWithRulesCacheInfo.fromRuleCollectionWithRules(collection, activeRules);
-
-                    ruleCacheService.cacheRuleCollectionWithRules(collectionId, updatedCacheInfo);
-
-                    log.info("Updated RuleCollectionWithRulesCacheInfo for collection: {}, activeRules: {}",
-                            collectionId, activeRules.size());
+                    log.info("Updated cache for collection: {} with {} rules", collectionId, updatedRules.size());
                 } catch (Exception e) {
-                    log.error("Error updating RuleCollectionWithRulesCacheInfo for collection {}: {}",
-                            collectionId, e.getMessage(), e);
+                    log.error("Error updating cache for collection {}: {}", collectionId, e.getMessage(), e);
+                    throw new Exception("Error updating cache for collection " + collectionId + ": " + e.getMessage());
                 }
             }
             var response = RuleServiceProto.ModifyRuleCollectionResponse.newBuilder()
@@ -598,13 +651,14 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
             responseObserver.onNext(response);
             responseObserver.onCompleted();
         } catch (Exception e) {
+            log.error("Error updating rule collection: {}", e.getMessage(), e);
             var errorResponse = RuleServiceProto.ModifyRuleCollectionResponse.newBuilder()
                     .setStatus(RuleServiceProto.Status.newBuilder()
                             .setCode(RuleServiceProto.StatusCode.INTERNAL)
                             .setMessage("Internal server error")
                             .build())
                     .setError(RuleServiceProto.Error.newBuilder()
-                            .setCode("MODIFY_COLLECTION_ERROR")
+                            .setCode("UPDATE_COLLECTION_FAILED")
                             .setMessage(e.getMessage())
                             .build())
                     .build();
@@ -615,8 +669,6 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
 
     private Object convertProtobufValueToJavaObject(com.google.protobuf.Value value) {
         switch (value.getKindCase()) {
-            case NULL_VALUE:
-                return null;
             case NUMBER_VALUE:
                 return value.getNumberValue();
             case STRING_VALUE:
@@ -624,14 +676,12 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
             case BOOL_VALUE:
                 return value.getBoolValue();
             case STRUCT_VALUE:
-                // Handle nested Structs by converting to Map
                 Map<String, Object> structMap = new HashMap<>();
                 for (Map.Entry<String, com.google.protobuf.Value> entry : value.getStructValue().getFieldsMap().entrySet()) {
                     structMap.put(entry.getKey(), convertProtobufValueToJavaObject(entry.getValue()));
                 }
                 return structMap;
             case LIST_VALUE:
-                // Handle Lists by converting each value
                 List<Object> list = new ArrayList<>();
                 for (com.google.protobuf.Value listValue : value.getListValue().getValuesList()) {
                     list.add(convertProtobufValueToJavaObject(listValue));

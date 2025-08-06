@@ -2,11 +2,13 @@ package org.couponmanagement.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.observation.annotation.Observed;
 import org.couponmanagement.dto.ApplyCouponRequest;
 import org.couponmanagement.dto.AutoApplyCouponRequest;
 import org.couponmanagement.dto.UpdateCouponRequest;
 import org.couponmanagement.dto.response.*;
 import org.couponmanagement.grpc.CouponServiceClient;
+import org.couponmanagement.grpc.annotation.PerformanceMonitor;
 import org.couponmanagement.coupon.*;
 import org.couponmanagement.security.RequireAdmin;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +31,8 @@ public class CouponController {
     private CouponServiceClient couponServiceClient;
 
     @PostMapping("/apply-manual")
+    @Observed(name = "apply-coupon-manual", contextualName = "manual-coupon-application")
+    @PerformanceMonitor
     public ResponseEntity<?> applyCouponManual(@Valid @RequestBody ApplyCouponRequest request) {
         try {
             log.info("Apply coupon manual: user={}, coupon={}", request.getUserId(), request.getCouponCode());
@@ -82,6 +86,8 @@ public class CouponController {
     }
 
     @PostMapping("/apply-auto")
+    @Observed(name = "apply-coupon-auto", contextualName = "auto-coupon-application")
+    @PerformanceMonitor
     public ResponseEntity<?> applyCouponAuto(@Valid @RequestBody AutoApplyCouponRequest request) {
         try {
             log.info("Apply coupon auto: user={}", request.getUserId());
@@ -135,7 +141,7 @@ public class CouponController {
 
     @PutMapping("/{couponId}")
     @RequireAdmin
-    public ResponseEntity<?> updateCoupon(@PathVariable int couponId, @Valid @RequestBody UpdateCouponRequest request) {
+    public ResponseEntity<?> updateCoupon(@PathVariable("couponId") int couponId, @Valid @RequestBody UpdateCouponRequest request) {
         try {
             log.info("Update coupon: id={}, code={}", couponId, request.getCode());
             ObjectMapper objectMapper = new ObjectMapper();
@@ -287,7 +293,6 @@ public class CouponController {
                         .code(protoCoupon.getCode())
                         .title(protoCoupon.getTitle())
                         .description(protoCoupon.getDescription())
-                        .status(protoCoupon.getStatus())
                         .type(protoCoupon.getType())
                         .config(configJson)
                         .isActive(protoCoupon.getIsActive())
@@ -328,8 +333,10 @@ public class CouponController {
     }
 
     @GetMapping("/user/{userId}")
+    @Observed(name = "get-user-coupons", contextualName = "user-coupons-retrieval")
+    @PerformanceMonitor
     public ResponseEntity<?> getUserCoupons(
-            @PathVariable int userId,
+            @PathVariable("userId") int userId,
             @RequestParam(name = "page",defaultValue = "0") int page,
             @RequestParam(name = "size", defaultValue = "10") int size) {
         try {

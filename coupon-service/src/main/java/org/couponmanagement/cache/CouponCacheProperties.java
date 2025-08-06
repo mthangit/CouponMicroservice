@@ -18,19 +18,19 @@ public class CouponCacheProperties{
     private String keyPrefix = "coupon-service";
 
     @Min(1)
-    private long defaultTtlSeconds = 600;
+    private long defaultTtlSeconds = 172800;
 
     @Min(1)
-    private long couponInfoTtlSeconds = 600;
+    private long couponInfoTtlSeconds = 172800;
 
     @Min(1)
-    private long userCouponsTtlSeconds = 300;
+    private long userCouponsTtlSeconds = 172800;
 
     @Min(1)
-    private long couponDetailedTtlSeconds = 900;
+    private long couponDetailedTtlSeconds = 172800;
 
     @Min(1)
-    private long couponDetailTtlSeconds = 1200;
+    private long couponDetailTtlSeconds = 172800;
 
     public String getCouponInfoKey(String couponCode) {
         return "coupon:info:" + couponCode;

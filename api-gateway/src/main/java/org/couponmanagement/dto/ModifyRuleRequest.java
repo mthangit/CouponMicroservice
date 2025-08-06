@@ -8,7 +8,6 @@ import java.util.Map;
 public class ModifyRuleRequest {
     @NotNull(message = "Rule ID is required")
     private Integer ruleId;
-    private String requestId;
     private String description;
     private Boolean isActive;
     private String ruleType;

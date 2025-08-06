@@ -4,9 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.couponmanagement.coupon.CouponServiceProto;
 import org.couponmanagement.entity.CouponUser;
-import org.hibernate.dialect.function.DB2SubstringFunction;
 
 import java.math.BigDecimal;
 

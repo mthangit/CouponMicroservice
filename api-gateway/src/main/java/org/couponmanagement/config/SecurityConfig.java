@@ -25,14 +25,17 @@ public class SecurityConfig {
     
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     
-    @Value("#{'${security.public-endpoints}'.split(',')}")
-    private List<String> publicEndpoints;
-    
-    @Value("#{'${cors.allowed-origins}'.split(',')}")
-    private List<String> allowedOrigins;
-    
+    @Value("${security.public-endpoints:/api/v1/auth/login,/api/v1/auth/register,/actuator/**,/swagger-ui/**,/api-docs/**,/v3/api-docs/**}")
+    private String publicEndpointsString;
+
+    @Value("${cors.allowed-origins:*}")
+    private String allowedOriginsString;
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        // Parse the public endpoints
+        String[] publicEndpoints = publicEndpointsString.split(",");
+
         http
             .csrf(AbstractHttpConfigurer::disable)
             
@@ -43,11 +46,7 @@ public class SecurityConfig {
             
             .authorizeHttpRequests(auth -> {
                 for (String endpoint : publicEndpoints) {
-                    if (endpoint.endsWith("/**")) {
-                        auth.requestMatchers(endpoint).permitAll();
-                    } else {
-                        auth.requestMatchers(endpoint).permitAll();
-                    }
+                    auth.requestMatchers(endpoint.trim()).permitAll();
                 }
                 
                 auth.anyRequest().authenticated();
@@ -61,16 +60,16 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        
-        // Sử dụng allowedOriginPatterns thay vì allowedOrigins khi có wildcard và allowCredentials = true
+        List<String> allowedOrigins = Arrays.asList(allowedOriginsString.split(","));
+
         if (allowedOrigins.contains("*")) {
-            configuration.setAllowedOriginPatterns(Arrays.asList("*"));
+            configuration.setAllowedOriginPatterns(List.of("*"));
         } else {
             configuration.setAllowedOrigins(allowedOrigins);
         }
 
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
-        configuration.setAllowedHeaders(Arrays.asList("*"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+        configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
         configuration.setExposedHeaders(Arrays.asList("Authorization", "Content-Type"));
         
