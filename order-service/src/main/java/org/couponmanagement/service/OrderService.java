@@ -11,13 +11,19 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.couponmanagement.coupon.CouponServiceGrpc;
 import org.couponmanagement.coupon.CouponServiceProto;
+import org.couponmanagement.dto.CouponResult;
+import org.couponmanagement.dto.OrderError;
+import org.couponmanagement.dto.ProcessOrderRequest;
+import org.couponmanagement.dto.ProcessOrderResult;
 import org.couponmanagement.entity.Order;
 import org.couponmanagement.grpc.annotation.PerformanceMonitor;
 import org.couponmanagement.grpc.client.GrpcClientFactory;
 import org.couponmanagement.grpc.validation.RequestValidator;
+import org.couponmanagement.grpc.validation.ValidationException;
 import org.couponmanagement.repository.OrderRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -27,7 +33,6 @@ import java.util.concurrent.TimeUnit;
 @Service
 @RequiredArgsConstructor
 @Slf4j
-@Transactional
 public class OrderService {
 
     private final OrderRepository orderRepository;
@@ -36,27 +41,28 @@ public class OrderService {
 
     @Observed(name = "process-order-manual", contextualName = "manual-order-processing")
     @PerformanceMonitor
-    public ProcessOrderResult processOrderManual(ProcessOrderRequest request) {
+    public ProcessOrderResult processOrderManual(Integer userId, String couponCode, Double orderAmount, LocalDateTime orderDate, String requestId) {
         Integer couponId = null;
+        ProcessOrderRequest request = ProcessOrderRequest.builder()
+                .userId(userId)
+                .requestId(requestId)
+                .couponCode(couponCode)
+                .orderAmount(orderAmount)
+                .orderDate(orderDate)
+                .build();
         try {
-            log.info("Processing order with manual coupon: userId={}, couponCode={}, amount={}", 
-                    request.getUserId(), request.getCouponCode(), request.getOrderAmount());
-
-            validator.validateUserId(request.getUserId());
-            validator.validateOrderAmount(request.getOrderAmount());
-            validator.validateCouponCode(request.getCouponCode());
-
-            CouponResult couponResult = callCouponServiceManual(request.getUserId(), 
-                    request.getCouponCode(), request.getOrderAmount(),
-                    request.getOrderDate());
-            couponId = couponResult.getCouponId();
-            if (!couponResult.isSuccess()) {
+            CouponResult couponResult = callCouponServiceManual(request.userId(),
+                    request.couponCode(), request.orderAmount(),
+                    request.orderDate());
+            couponId = couponResult.couponId();
+            if (!couponResult.success()) {
                 if (couponId != null) {
-                    rollbackCouponUsage(request.getUserId(), couponId);
+                    rollbackCouponUsage(request.userId(), couponId);
                 }
                 return ProcessOrderResult.builder()
                         .success(false)
-                        .errorMessage(couponResult.getErrorMessage())
+                        .errorMessage(couponResult.errorMessage())
+                        .errorCode(couponResult.errorCode())
                         .build();
             }
 
@@ -69,8 +75,8 @@ public class OrderService {
                     .orderAmount(order.getOrderAmount())
                     .discountAmount(order.getDiscountAmount())
                     .finalAmount(order.getFinalAmount())
-                    .couponCode(couponResult.getCouponCode())
-                    .couponId(couponResult.getCouponId())
+                    .couponCode(couponResult.couponCode())
+                    .couponId(couponResult.couponId())
                     .orderDate(LocalDateTime.now())
                     .status("COMPLETED")
                     .build();
@@ -78,7 +84,7 @@ public class OrderService {
         } catch (Exception e) {
             log.error("Error processing manual order: {}", e.getMessage(), e);
             if (couponId != null) {
-                rollbackCouponUsage(request.getUserId(), couponId);
+                rollbackCouponUsage(request.userId(), couponId);
             }
             return ProcessOrderResult.builder()
                     .success(false)
@@ -94,16 +100,16 @@ public class OrderService {
         Integer couponId = null;
         try {
             log.info("Processing order with auto coupon: userId={}, amount={}", 
-                    request.getUserId(), request.getOrderAmount());
+                    request.userId(), request.orderAmount());
 
-            validator.validateUserId(request.getUserId());
-            validator.validateOrderAmount(request.getOrderAmount());
+            validator.validateUserId(request.userId());
+            validator.validateOrderAmount(request.orderAmount());
 
-            CouponResult couponResult = callCouponServiceAuto(request.getUserId(), request.getOrderAmount(), request.getOrderDate());
-            couponId = couponResult.getCouponId();
-            if (!couponResult.isSuccess()) {
+            CouponResult couponResult = callCouponServiceAuto(request.userId(), request.orderAmount(), request.orderDate());
+            couponId = couponResult.couponId();
+            if (!couponResult.success()) {
                 if (couponId != null) {
-                    rollbackCouponUsage(request.getUserId(), couponId);
+                    rollbackCouponUsage(request.userId(), couponId);
                 }
                 couponResult = CouponResult.builder()
                         .success(true)
@@ -120,17 +126,26 @@ public class OrderService {
                     .orderAmount(order.getOrderAmount())
                     .discountAmount(order.getDiscountAmount())
                     .finalAmount(order.getFinalAmount())
-                    .couponCode(couponResult.getCouponCode())
-                    .couponId(couponResult.getCouponId())
+                    .couponCode(couponResult.couponCode())
+                    .couponId(couponResult.couponId())
                     .orderDate(LocalDateTime.now())
                     .status("COMPLETED")
                     .build();
 
-        } catch (Exception e) {
+        } catch (ValidationException e){
+            log.error("Validation error processing auto order: {}", e.getMessage());
+            return ProcessOrderResult.builder()
+                    .success(false)
+                    .errorMessage("Validation error: " + e.getMessage())
+                    .errorCode(OrderError.INVALID_ARGUMENT.name())
+                    .build();
+        }
+        catch (Exception e) {
             log.error("Error processing auto order: {}", e.getMessage(), e);
             if (couponId != null) {
-                rollbackCouponUsage(request.getUserId(), couponId);
+                rollbackCouponUsage(request.userId(), couponId);
             }
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             return ProcessOrderResult.builder()
                     .success(false)
                     .errorMessage("Failed to process order: " + e.getMessage())
@@ -154,16 +169,25 @@ public class OrderService {
 
             if (grpcResponse.getStatus().getCode() == CouponServiceProto.StatusCode.OK) {
                 var payload = grpcResponse.getPayload();
-                return CouponResult.builder()
-                        .success(true)
-                        .couponId(payload.getCouponId())
-                        .couponCode(payload.getCouponCode())
-                        .discountAmount(BigDecimal.valueOf(payload.getDiscountAmount()))
-                        .build();
+                if (payload.getSuccess()){
+                    return CouponResult.builder()
+                            .success(true)
+                            .couponId(payload.getCouponId())
+                            .couponCode(payload.getCouponCode())
+                            .discountAmount(BigDecimal.valueOf(payload.getDiscountAmount()))
+                            .build();
+                } else {
+                    return CouponResult.builder()
+                            .success(false)
+                            .errorMessage(payload.getErrorMessage())
+                            .errorCode(grpcResponse.getError().getCode())
+                            .build();
+                }
             } else {
                 return CouponResult.builder()
                         .success(false)
                         .errorMessage(grpcResponse.getStatus().getMessage())
+                        .errorCode(grpcResponse.getStatus().getCode().name())
                         .build();
             }
 
@@ -172,6 +196,7 @@ public class OrderService {
             return CouponResult.builder()
                     .success(false)
                     .errorMessage("Coupon service unavailable")
+                    .errorCode(OrderError.INTERNAL_ERROR.name())
                     .build();
         }
     }
@@ -215,18 +240,19 @@ public class OrderService {
         }
     }
 
+    @Transactional
     private Order createOrder(ProcessOrderRequest request, CouponResult couponResult) {
-        BigDecimal orderAmount = BigDecimal.valueOf(request.getOrderAmount());
-        BigDecimal discountAmount = couponResult.getDiscountAmount() != null ? 
-                couponResult.getDiscountAmount() : BigDecimal.ZERO;
+        BigDecimal orderAmount = BigDecimal.valueOf(request.orderAmount());
+        BigDecimal discountAmount = couponResult.discountAmount() != null ?
+                couponResult.discountAmount() : BigDecimal.ZERO;
         BigDecimal finalAmount = orderAmount.subtract(discountAmount);
 
         Order order = Order.builder()
-                .userId(request.getUserId())
+                .userId(request.userId())
                 .orderAmount(orderAmount)
                 .discountAmount(discountAmount)
                 .finalAmount(finalAmount)
-                .couponId(couponResult.getCouponId())
+                .couponId(couponResult.couponId())
                 .build();
 
         return orderRepository.save(order);
@@ -249,48 +275,5 @@ public class OrderService {
         } catch (Exception ex) {
             log.error("Exception when calling rollbackCouponUsage: userId={}, couponId={}, error={}", userId, couponId, ex.getMessage(), ex);
         }
-    }
-
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class ProcessOrderRequest {
-        private Integer userId;
-        private Double orderAmount;
-        private String couponCode;
-        private String requestId;
-        private LocalDateTime orderDate;
-    }
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class ProcessOrderResult {
-        private boolean success;
-        private String errorMessage;
-        private Integer orderId;
-        private Integer userId;
-        private BigDecimal orderAmount;
-        private BigDecimal discountAmount;
-        private BigDecimal finalAmount;
-        private String couponCode;
-        private Integer couponId;
-        private LocalDateTime orderDate;
-        private String status;
-    }
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    private static class CouponResult {
-        private boolean success;
-        private String errorMessage;
-        private Integer couponId;
-        private String couponCode;
-        private BigDecimal discountAmount;
     }
 }

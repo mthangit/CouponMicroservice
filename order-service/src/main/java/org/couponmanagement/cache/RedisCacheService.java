@@ -30,12 +30,10 @@ public class RedisCacheService {
 
             if (cached == null) {
                 missCount.incrementAndGet();
-                log.debug("Cache miss for key: {}", fullKey);
                 return Optional.empty();
             }
 
             hitCount.incrementAndGet();
-            log.debug("Cache hit for key: {}", fullKey);
 
             if (valueType.isInstance(cached)) {
                 return Optional.of(valueType.cast(cached));

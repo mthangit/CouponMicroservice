@@ -5,6 +5,7 @@ import io.grpc.ClientInterceptors;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.micrometer.core.instrument.binder.grpc.ObservationGrpcClientInterceptor;
+import io.micrometer.observation.annotation.Observed;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -29,7 +30,10 @@ public class GrpcClientFactory {
     @Value("${grpc.client.rule-service.address:localhost:9090}")
     private String ruleServiceAddress;
     
-    @Value("${grpc.client.order-service.address:localhost:9093}")
+    @Value("${grpc.client.budget-service.address:localhost:9093}")
+    private String budgetServiceAddress;
+
+    @Value("${grpc.client.order-service.address:localhost:9095}")
     private String orderServiceAddress;
     
     private final ConcurrentHashMap<String, ManagedChannel> channels = new ConcurrentHashMap<>();
@@ -46,18 +50,22 @@ public class GrpcClientFactory {
     public Channel getCouponServiceChannel() {
         return getOrCreateChannel("coupon-service", couponServiceAddress);
     }
-    
+
+    @Observed(name = "getRuleServiceChannel", contextualName = "GrpcClientFactory.getRuleServiceChannel")
     public Channel getRuleServiceChannel() {
         return getOrCreateChannel("rule-service", ruleServiceAddress);
     }
     
+    public Channel getBudgetServiceChannel() {
+        return getOrCreateChannel("budget-service", budgetServiceAddress);
+    }
+
     public Channel getOrderServiceChannel() {
         return getOrCreateChannel("order-service", orderServiceAddress);
     }
     
     private Channel getOrCreateChannel(String serviceName, String address) {
         ManagedChannel baseChannel = channels.computeIfAbsent(serviceName, k -> {
-            log.info("Creating gRPC channel for service: {} at address: {}", serviceName, address);
 
             String cleanAddress = address;
             if (address.startsWith("static://")) {
@@ -68,19 +76,14 @@ public class GrpcClientFactory {
             String host = parts[0];
             int port = Integer.parseInt(parts[1]);
 
-            ManagedChannel channel = ManagedChannelBuilder.forAddress(host, port)
+            return ManagedChannelBuilder.forAddress(host, port)
                     .usePlaintext()
                     .build();
-
-            log.info("Base gRPC channel created for service: {}", serviceName);
-            return channel;
         });
 
         GrpcClientInterceptor interceptor = new GrpcClientInterceptor(grpcClientMetadataProperties);
 
-        Channel interceptedChannel = ClientInterceptors.intercept(baseChannel, interceptor, observationGrpcClientInterceptor);
-        log.info("Channel intercepted for service: {}", serviceName);
-        return interceptedChannel;
+        return ClientInterceptors.intercept(baseChannel, interceptor, observationGrpcClientInterceptor);
     }
 
     public void shutdown() {

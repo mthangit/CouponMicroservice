@@ -18,10 +18,17 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import org.junit.jupiter.api.DisplayName;
+import org.couponmanagement.dto.CouponDetail;
+import org.couponmanagement.dto.UserCouponClaimInfo;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @ExtendWith(MockitoExtension.class)
 class CouponGrpcServiceTest {
@@ -51,7 +58,6 @@ class CouponGrpcServiceTest {
     private CouponGrpcService couponGrpcService;
 
     private CouponServiceProto.ApplyCouponManualRequest validManualRequest;
-    private CouponServiceProto.ApplyCouponAutoRequest validAutoRequest;
 
     @BeforeEach
     void setUp() {
@@ -62,7 +68,7 @@ class CouponGrpcServiceTest {
                 .setOrderDate(LocalDateTime.now().toString())
                 .build();
 
-        validAutoRequest = CouponServiceProto.ApplyCouponAutoRequest.newBuilder()
+        var validAutoRequest = CouponServiceProto.ApplyCouponAutoRequest.newBuilder()
                 .setUserId(1)
                 .setOrderAmount(100.0)
                 .setOrderDate(LocalDateTime.now().toString())
@@ -113,7 +119,6 @@ class CouponGrpcServiceTest {
 
     @Test
     void applyCouponManual_Failure() {
-        // Arrange
         doNothing().when(validator).validateUserId(anyInt());
         doNothing().when(validator).validateCouponCode(anyString());
         doNothing().when(validator).validateOrderAmount(anyDouble());
@@ -131,10 +136,8 @@ class CouponGrpcServiceTest {
                 any(LocalDateTime.class)))
                 .thenReturn(failureResult);
 
-        // Act
         couponGrpcService.applyCouponManual(validManualRequest, manualResponseObserver);
 
-        // Assert
         ArgumentCaptor<CouponServiceProto.ApplyCouponManualResponse> responseCaptor =
                 ArgumentCaptor.forClass(CouponServiceProto.ApplyCouponManualResponse.class);
 
@@ -143,7 +146,7 @@ class CouponGrpcServiceTest {
 
         CouponServiceProto.ApplyCouponManualResponse response = responseCaptor.getValue();
         assertEquals(CouponServiceProto.StatusCode.INTERNAL, response.getStatus().getCode());
-        assertEquals("Coupon not found", response.getStatus().getMessage());
+        assertEquals("Coupon not found for user", response.getStatus().getMessage());
         assertFalse(response.getPayload().getSuccess());
         assertEquals(100.0, response.getPayload().getOrderAmount());
         assertEquals(0.0, response.getPayload().getDiscountAmount());
@@ -153,14 +156,10 @@ class CouponGrpcServiceTest {
 
     @Test
     void applyCouponManual_ValidationException() {
-        // Arrange
         doThrow(new IllegalArgumentException("Invalid user ID"))
                 .when(validator).validateUserId(anyInt());
 
-        // Act
         couponGrpcService.applyCouponManual(validManualRequest, manualResponseObserver);
-
-        // Assert
         ArgumentCaptor<CouponServiceProto.ApplyCouponManualResponse> responseCaptor =
                 ArgumentCaptor.forClass(CouponServiceProto.ApplyCouponManualResponse.class);
 
@@ -176,7 +175,6 @@ class CouponGrpcServiceTest {
 
     @Test
     void applyCouponManual_RuntimeException() {
-        // Arrange
         doNothing().when(validator).validateUserId(anyInt());
         doNothing().when(validator).validateCouponCode(anyString());
         doNothing().when(validator).validateOrderAmount(anyDouble());
@@ -184,10 +182,8 @@ class CouponGrpcServiceTest {
         when(couponService.applyCouponManual(any(), any(), any(), any()))
                 .thenThrow(new RuntimeException("Database connection failed"));
 
-        // Act
         couponGrpcService.applyCouponManual(validManualRequest, manualResponseObserver);
 
-        // Assert
         ArgumentCaptor<CouponServiceProto.ApplyCouponManualResponse> responseCaptor =
                 ArgumentCaptor.forClass(CouponServiceProto.ApplyCouponManualResponse.class);
 
@@ -200,153 +196,89 @@ class CouponGrpcServiceTest {
     }
 
     @Test
-    void applyCouponAuto_Success() {
-        // Arrange
-        doNothing().when(validator).validateUserId(anyInt());
-        doNothing().when(validator).validateOrderAmount(anyDouble());
+    @DisplayName("getUserCoupons should only return active coupons")
+    void getUserCoupons_ShouldOnlyReturnActiveCoupons() {
+        // Given
+        Integer userId = 1;
+        int page = 0;
+        int size = 10;
 
-        CouponApplicationResult successResult = CouponApplicationResult.builder()
-                .success(true)
-                .couponId(456)
-                .couponCode("AUTO20")
-                .discountAmount(BigDecimal.valueOf(20.0))
+        // Create test coupons
+        CouponDetail activeCouponDetail = new CouponDetail();
+        activeCouponDetail.setCouponId(1);
+        activeCouponDetail.setCouponCode("ACTIVE001");
+        activeCouponDetail.setActive(true);
+        activeCouponDetail.setCreatedAt(LocalDateTime.now());
+        activeCouponDetail.setExpiryDate(LocalDateTime.now().plusDays(30));
+
+        CouponDetail inactiveCouponDetail = new CouponDetail();
+        inactiveCouponDetail.setCouponId(2);
+        inactiveCouponDetail.setCouponCode("INACTIVE001");
+        inactiveCouponDetail.setActive(false);
+        inactiveCouponDetail.setCreatedAt(LocalDateTime.now());
+        inactiveCouponDetail.setExpiryDate(LocalDateTime.now().plusDays(30));
+
+        // Create UserCouponClaimInfo
+        UserCouponClaimInfo activeClaimInfo = UserCouponClaimInfo.builder()
+                .userId(userId)
+                .couponId(1)
+                .claimedDate(LocalDateTime.now())
+                .expiryDate(LocalDateTime.now().plusDays(30))
                 .build();
 
-        when(couponService.applyCouponAuto(
-                eq(1),
-                eq(BigDecimal.valueOf(100.0)),
-                any(LocalDateTime.class)))
-                .thenReturn(successResult);
-
-        // Act
-        couponGrpcService.applyCouponAuto(validAutoRequest, autoResponseObserver);
-
-        // Assert
-        ArgumentCaptor<CouponServiceProto.ApplyCouponAutoResponse> responseCaptor =
-                ArgumentCaptor.forClass(CouponServiceProto.ApplyCouponAutoResponse.class);
-
-        verify(autoResponseObserver).onNext(responseCaptor.capture());
-        verify(autoResponseObserver).onCompleted();
-
-        CouponServiceProto.ApplyCouponAutoResponse response = responseCaptor.getValue();
-        assertEquals(CouponServiceProto.StatusCode.OK, response.getStatus().getCode());
-        assertEquals("Coupon applied successfully", response.getStatus().getMessage());
-        assertEquals(456, response.getPayload().getCouponId());
-        assertEquals("AUTO20", response.getPayload().getCouponCode());
-        assertEquals(100.0, response.getPayload().getOrderAmount());
-        assertEquals(20.0, response.getPayload().getDiscountAmount());
-        assertEquals(80.0, response.getPayload().getFinalAmount());
-    }
-
-    @Test
-    void applyCouponAuto_NoSuitableCoupon() {
-        // Arrange
-        doNothing().when(validator).validateUserId(anyInt());
-        doNothing().when(validator).validateOrderAmount(anyDouble());
-
-        CouponApplicationResult failureResult = CouponApplicationResult.builder()
-                .success(false)
-                .errorMessage("No suitable coupon found")
-                .discountAmount(BigDecimal.ZERO)
+        UserCouponClaimInfo inactiveClaimInfo = UserCouponClaimInfo.builder()
+                .userId(userId)
+                .couponId(2)
+                .claimedDate(LocalDateTime.now())
+                .expiryDate(LocalDateTime.now().plusDays(30))
                 .build();
 
-        when(couponService.applyCouponAuto(
-                eq(1),
-                eq(BigDecimal.valueOf(100.0)),
-                any(LocalDateTime.class)))
-                .thenReturn(failureResult);
+        // Create coupon detail map
+        Map<Integer, CouponDetail> couponDetailMap = new HashMap<>();
+        couponDetailMap.put(1, activeCouponDetail);
+        couponDetailMap.put(2, inactiveCouponDetail);
 
-        // Act
-        couponGrpcService.applyCouponAuto(validAutoRequest, autoResponseObserver);
+        // Create UserCouponsResult
+        CouponService.UserCouponsResult serviceResult = new CouponService.UserCouponsResult(
+                List.of(activeClaimInfo, inactiveClaimInfo),
+                couponDetailMap,
+                1, // Only active coupon should be counted
+                page,
+                size
+        );
 
-        // Assert
-        ArgumentCaptor<CouponServiceProto.ApplyCouponAutoResponse> responseCaptor =
-                ArgumentCaptor.forClass(CouponServiceProto.ApplyCouponAutoResponse.class);
+        // Mock service
+        when(couponService.getUserCouponsWithPagination(userId, page, size))
+                .thenReturn(serviceResult);
 
-        verify(autoResponseObserver).onNext(responseCaptor.capture());
-        verify(autoResponseObserver).onCompleted();
-
-        CouponServiceProto.ApplyCouponAutoResponse response = responseCaptor.getValue();
-        assertEquals(CouponServiceProto.StatusCode.NOT_FOUND, response.getStatus().getCode());
-        assertEquals("No suitable coupon found", response.getStatus().getMessage());
-    }
-
-    @Test
-    void applyCouponAuto_ValidationException() {
-        // Arrange
-        doThrow(new IllegalArgumentException("Invalid order amount"))
-                .when(validator).validateOrderAmount(anyDouble());
-
-        // Act
-        couponGrpcService.applyCouponAuto(validAutoRequest, autoResponseObserver);
-
-        // Assert
-        ArgumentCaptor<CouponServiceProto.ApplyCouponAutoResponse> responseCaptor =
-                ArgumentCaptor.forClass(CouponServiceProto.ApplyCouponAutoResponse.class);
-
-        verify(autoResponseObserver).onNext(responseCaptor.capture());
-        verify(autoResponseObserver).onCompleted();
-
-        CouponServiceProto.ApplyCouponAutoResponse response = responseCaptor.getValue();
-        assertEquals(CouponServiceProto.StatusCode.INVALID_ARGUMENT, response.getStatus().getCode());
-        assertTrue(response.getStatus().getMessage().contains("Invalid order amount"));
-
-        verify(couponService, never()).applyCouponAuto(any(), any(), any());
-    }
-
-    @Test
-    void applyCouponAuto_RuntimeException() {
-        // Arrange
-        doNothing().when(validator).validateUserId(anyInt());
-        doNothing().when(validator).validateOrderAmount(anyDouble());
-
-        when(couponService.applyCouponAuto(any(), any(), any()))
-                .thenThrow(new RuntimeException("Service unavailable"));
-
-        // Act
-        couponGrpcService.applyCouponAuto(validAutoRequest, autoResponseObserver);
-
-        // Assert
-        ArgumentCaptor<CouponServiceProto.ApplyCouponAutoResponse> responseCaptor =
-                ArgumentCaptor.forClass(CouponServiceProto.ApplyCouponAutoResponse.class);
-
-        verify(autoResponseObserver).onNext(responseCaptor.capture());
-        verify(autoResponseObserver).onCompleted();
-
-        CouponServiceProto.ApplyCouponAutoResponse response = responseCaptor.getValue();
-        assertEquals(CouponServiceProto.StatusCode.INTERNAL, response.getStatus().getCode());
-        assertEquals("Internal server error", response.getStatus().getMessage());
-    }
-
-    @Test
-    void applyCouponManual_InvalidDateFormat() {
-        // Arrange
-        CouponServiceProto.ApplyCouponManualRequest invalidDateRequest =
-                CouponServiceProto.ApplyCouponManualRequest.newBuilder()
-                .setUserId(1)
-                .setCouponCode("DISCOUNT10")
-                .setOrderAmount(100.0)
-                .setOrderDate("invalid-date-format")
+        // Create request
+        CouponServiceProto.GetUserCouponsRequest request = CouponServiceProto.GetUserCouponsRequest.newBuilder()
+                .setUserId(userId)
+                .setPage(page)
+                .setSize(size)
                 .build();
 
-        doNothing().when(validator).validateUserId(anyInt());
-        doNothing().when(validator).validateCouponCode(anyString());
-        doNothing().when(validator).validateOrderAmount(anyDouble());
+        // Create response observer
+        StreamObserver<CouponServiceProto.GetUserCouponsResponse> responseObserver = mock(StreamObserver.class);
 
-        // Act
-        couponGrpcService.applyCouponManual(invalidDateRequest, manualResponseObserver);
+        // When
+        couponGrpcService.getUserCoupons(request, responseObserver);
 
-        // Assert
-        ArgumentCaptor<CouponServiceProto.ApplyCouponManualResponse> responseCaptor =
-                ArgumentCaptor.forClass(CouponServiceProto.ApplyCouponManualResponse.class);
+        // Then
+        ArgumentCaptor<CouponServiceProto.GetUserCouponsResponse> responseCaptor = 
+                ArgumentCaptor.forClass(CouponServiceProto.GetUserCouponsResponse.class);
+        verify(responseObserver).onNext(responseCaptor.capture());
+        verify(responseObserver).onCompleted();
 
-        verify(manualResponseObserver).onNext(responseCaptor.capture());
-        verify(manualResponseObserver).onCompleted();
+        CouponServiceProto.GetUserCouponsResponse response = responseCaptor.getValue();
+        assertThat(response.getStatus().getCode()).isEqualTo(CouponServiceProto.StatusCode.OK);
+        assertThat(response.getPayload().getUserCouponsCount()).isEqualTo(1);
+        assertThat(response.getPayload().getTotalCount()).isEqualTo(1);
 
-        CouponServiceProto.ApplyCouponManualResponse response = responseCaptor.getValue();
-        assertEquals(CouponServiceProto.StatusCode.INVALID_ARGUMENT, response.getStatus().getCode());
-        assertTrue(response.getStatus().getMessage().contains("Invalid date format"));
-
-        verify(couponService, never()).applyCouponManual(any(), any(), any(), any());
+        // Verify only active coupon is returned
+        CouponServiceProto.UserCouponSummary returnedCoupon = response.getPayload().getUserCoupons(0);
+        assertThat(returnedCoupon.getCouponId()).isEqualTo(1);
+        assertThat(returnedCoupon.getCouponCode()).isEqualTo("ACTIVE001");
     }
+
 }

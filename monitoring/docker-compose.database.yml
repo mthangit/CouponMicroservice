@@ -44,6 +44,21 @@ services:
       - rule_mysql_data:/var/lib/mysql
     networks:
       - app_network
+  
+  budget_mysql:
+    image: mysql:8.0
+    container_name: budget_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: budget_db
+      MYSQL_USER: budget
+      MYSQL_PASSWORD: 123456
+    ports:
+      - "3309:3306"
+    volumes:
+      - budget_mysql_data:/var/lib/mysql
+    networks:
+      - app_network
 
   order_redis:
     image: redis:7.2
@@ -75,13 +90,25 @@ services:
     networks:
       - app_network
 
+  budget_redis:
+    image: redis:7.2
+    container_name: budget_redis
+    ports:
+      - "6382:6379"
+    volumes:
+      - budget_redis_data:/data
+    networks:
+      - app_network
+
 volumes:
   order_mysql_data:
   coupon_mysql_data:
   rule_mysql_data:
+  budget_mysql_data:
   order_redis_data:
   coupon_redis_data:
   rule_redis_data:
+  budget_redis_data:  
 
 networks:
   app_network:

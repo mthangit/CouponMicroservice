@@ -4,10 +4,12 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Value;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.observation.annotation.Observed;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.devh.boot.grpc.server.service.GrpcService;
 import org.couponmanagement.cache.CouponCacheService;
+import org.couponmanagement.dto.CouponErrorCode;
 import org.couponmanagement.dto.UserCouponClaimInfo;
 import org.couponmanagement.dto.CouponDetail;
 import org.couponmanagement.coupon.CouponServiceGrpc;
@@ -47,7 +49,8 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
 
     @Override
     @RequireAuth("USE_COUPON")
-    @PerformanceMonitor()
+    @PerformanceMonitor
+    @Observed(name = "applyCouponManual", contextualName = "CouponGrpcService.applyCouponManual")
     public void applyCouponManual(CouponServiceProto.ApplyCouponManualRequest request,
                                 StreamObserver<CouponServiceProto.ApplyCouponManualResponse> responseObserver) {
         
@@ -91,7 +94,7 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
             } else {
                 response = CouponServiceProto.ApplyCouponManualResponse.newBuilder()
                         .setStatus(CouponServiceProto.Status.newBuilder()
-                                .setCode(CouponServiceProto.StatusCode.INTERNAL)
+                                .setCode(CouponServiceProto.StatusCode.OK)
                                 .setMessage(result.getErrorMessage())
                                 .build())
                         .setPayload(CouponServiceProto.ApplyCouponManualResponsePayload.newBuilder()
@@ -101,6 +104,9 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
                                 .setFinalAmount(finalAmount.doubleValue())
                                 .setErrorMessage(result.getErrorMessage())
                                 .build())
+                        .setError(CouponServiceProto.Error.newBuilder()
+                                .setCode(result.getErrorCode())
+                                .setMessage(result.getErrorMessage()))
                         .build();
 
                 log.warn("Manual coupon application failed: {}", result.getErrorMessage());
@@ -142,7 +148,7 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
             validator.validateUserId(request.getUserId());
             validator.validateOrderAmount(request.getOrderAmount());
 
-            CouponApplicationResult result = couponService.applyCouponAutoParallelSync(
+            CouponApplicationResult result = couponService.applyCouponAutoMultiple(
                     request.getUserId(), 
                     BigDecimal.valueOf(request.getOrderAmount()),
                     parseOrderDateTime(request.getOrderDate()));
@@ -482,6 +488,18 @@ public class CouponGrpcService extends CouponServiceGrpc.CouponServiceImplBase {
                 return;
             }
             var couponUser = couponUserOpt.get();
+
+            if (couponUser.getStatus() == CouponUser.CouponUserStatus.CLAIMED){
+                var response = CouponServiceProto.RollbackCouponUsageResponse.newBuilder()
+                        .setStatus(CouponServiceProto.Status.newBuilder()
+                                .setCode(CouponServiceProto.StatusCode.OK)
+                                .setMessage("Coupon usage rolled back successfully")
+                                .build())
+                        .build();
+                responseObserver.onNext(response);
+                responseObserver.onCompleted();
+            }
+
             couponUser.setStatus(CouponUser.CouponUserStatus.CLAIMED);
             couponUser.setUsedAt(null);
             couponUser.setUpdatedAt(java.time.LocalDateTime.now());

@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Coupon Management</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <!-- Login Form -->
+    <div id="loginForm" class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <i class="fas fa-shield-alt"></i>
+                <h2>Admin Login</h2>
+                <p>Login to manage the system</p>
+            </div>
+            <form id="authForm" class="login-form">
+                <div class="form-group">
+                    <label for="username">
+                        <i class="fas fa-user"></i>
+                        Username
+                    </label>
+                    <input type="text" id="username" value="admin" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">
+                        <i class="fas fa-lock"></i>
+                        Password
+                    </label>
+                    <input type="password" id="password" value="password" required>
+                </div>
+                                    <button type="submit" class="btn btn-primary btn-full">
+                        <i class="fas fa-sign-in-alt"></i>
+                        Login
+                    </button>
+            </form>
+            <div class="login-footer">
+                <p>Test accounts: admin/password, administrator/password</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Admin Panel -->
+    <div id="mainContent" class="admin-panel">
+        <!-- Header -->
+        <header class="admin-header">
+            <div class="header-content">
+                <div class="logo">
+                    <i class="fas fa-tags"></i>
+                    <h1>Coupon Admin</h1>
+                </div>
+                <div class="user-info">
+                    <span class="user-name">
+                        <i class="fas fa-user-circle"></i>
+                        <span id="currentUser">Admin</span>
+                    </span>
+                    <button id="logoutBtn" class="btn btn-outline">
+                        <i class="fas fa-sign-out-alt"></i>
+                        Logout
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <nav class="sidebar-nav">
+                <ul>
+                    <li>
+                        <a href="#" class="nav-item active" data-section="dashboard">
+                            <i class="fas fa-tachometer-alt"></i>
+                            Dashboard
+                        </a>
+                    </li>
+                    <li>
+                        <a href="#" class="nav-item" data-section="coupons">
+                            <i class="fas fa-ticket-alt"></i>
+                            Coupons
+                        </a>
+                    </li>
+                    <li>
+                        <a href="#" class="nav-item" data-section="rules">
+                            <i class="fas fa-cogs"></i>
+                            Rules
+                        </a>
+                    </li>
+                    <li>
+                        <a href="#" class="nav-item" data-section="collections">
+                            <i class="fas fa-layer-group"></i>
+                            Collections
+                        </a>
+                    </li>
+                </ul>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Dashboard Section -->
+            <section id="dashboard" class="content-section active">
+                <div class="section-header">
+                    <h2>Dashboard</h2>
+                    <p>Coupon management system overview</p>
+                </div>
+
+                <div class="quick-actions">
+                    <h3>Quick Actions</h3>
+                    <div class="action-buttons">
+                        <button class="btn btn-primary" onclick="switchSection('coupons')">
+                            <i class="fas fa-list"></i>
+                            Manage Coupons
+                        </button>
+                        <button class="btn btn-secondary" onclick="switchSection('rules')">
+                            <i class="fas fa-cog"></i>
+                            Manage Rules
+                        </button>
+                        <button class="btn btn-info" onclick="switchSection('collections')">
+                            <i class="fas fa-layer-group"></i>
+                            Manage Collections
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Coupons Section -->
+            <section id="coupons" class="content-section">
+                <div class="section-header">
+                    <h2>Coupon Management</h2>
+                    <p>List and edit coupon information</p>
+                </div>
+
+                <!-- Coupon List View -->
+                <div id="couponListView" class="list-view">
+                    <div class="list-header">
+                        <h3>Coupon List</h3>
+                        <button class="btn btn-primary" onclick="loadCoupons()">
+                            <i class="fas fa-sync-alt"></i>
+                            Refresh
+                        </button>
+                    </div>
+                    <div class="list-container">
+                        <div id="couponList" class="data-list">
+                            <!-- Coupons will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Coupon Edit Form -->
+                <div id="couponEditView" class="edit-view" style="display: none;">
+                    <div class="edit-header">
+                        <button class="btn btn-secondary" onclick="showCouponList()">
+                            <i class="fas fa-arrow-left"></i>
+                            Back to List
+                        </button>
+                        <h3>Edit Coupon</h3>
+                    </div>
+
+                    <div class="form-container">
+                        <form id="updateCouponForm" class="admin-form">
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label for="couponId">
+                                        <i class="fas fa-hashtag"></i>
+                                        Coupon ID *
+                                    </label>
+                                    <input type="number" id="couponId" name="couponId" readonly>
+                                </div>
+                                <div class="form-group">
+                                    <label for="couponCode">
+                                        <i class="fas fa-tag"></i>
+                                        Coupon Code *
+                                    </label>
+                                    <input type="text" id="couponCode" name="code" required>
+                                </div>
+                            </div>
+
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label for="couponTitle">
+                                        <i class="fas fa-heading"></i>
+                                        Title
+                                    </label>
+                                    <input type="text" id="couponTitle" name="title">
+                                </div>
+                                <div class="form-group">
+                                    <label for="couponStatus">
+                                        <i class="fas fa-toggle-on"></i>
+                                        Status
+                                    </label>
+                                    <select id="couponStatus" name="isActive">
+                                        <option value="true">Active</option>
+                                        <option value="false">Inactive</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label for="collectionKey">
+                                        <i class="fas fa-key"></i>
+                                        Collection Key
+                                    </label>
+                                    <select id="collectionKey" name="collectionKey">
+                                        <option value="">-- Select Collection --</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="couponExpireDate">
+                                        <i class="fas fa-calendar-times"></i>
+                                        Expire Date
+                                    </label>
+                                    <input type="datetime-local" id="couponExpireDate" name="expireDate">
+                                </div>
+                            </div>
+                            <div class="form-group full-width">
+                                <label for="couponDescription">
+                                    <i class="fas fa-align-left"></i>
+                                    Description
+                                </label>
+                                <textarea id="couponDescription" name="description" rows="3"></textarea>
+                            </div>
+
+                            <div class="config-section">
+                                <h4>
+                                    <i class="fas fa-cog"></i>
+                                    Coupon Configuration
+                                </h4>
+                                <div class="config-key-value">
+                                    <div class="config-item">
+                                        <label>Type:</label>
+                                        <input type="text" id="couponType" name="type" readonly>
+                                        <small>Cannot be edited</small>
+                                    </div>
+                                    <div class="config-item">
+                                        <label>Value:</label>
+                                        <input type="number" id="couponValue" name="value" step="0.01" min="0" readonly>
+                                        <small>Cannot be edited</small>
+                                    </div>
+                                    <div class="config-item" id="maxDiscountContainer" style="display: none;">
+                                        <label>Max Discount:</label>
+                                        <input type="number" id="couponMaxDiscount" name="max_discount" step="1" min="0">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-success">
+                                    <i class="fas fa-save"></i>
+                                    Save Changes
+                                </button>
+                                <button type="button" class="btn btn-secondary" onclick="showCouponList()">
+                                    <i class="fas fa-times"></i>
+                                    Cancel
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Rules Section -->
+            <section id="rules" class="content-section">
+                <div class="section-header">
+                    <h2>Rule Management</h2>
+                    <p>Configure rules applied to coupons</p>
+                </div>
+
+                <!-- Rule List View -->
+                <div id="ruleListView" class="list-view">
+                    <div class="list-header">
+                        <h3>Rule List</h3>
+                        <button class="btn btn-primary" onclick="loadRules()">
+                            <i class="fas fa-sync-alt"></i>
+                            Refresh
+                        </button>
+                    </div>
+                    <div class="list-container">
+                        <div id="ruleList" class="data-list">
+                            <!-- Rules will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Rule Edit Form -->
+                <div id="ruleEditView" class="edit-view" style="display: none;">
+                    <div class="edit-header">
+                        <button class="btn btn-secondary" onclick="showRuleList()">
+                            <i class="fas fa-arrow-left"></i>
+                            Back to List
+                        </button>
+                        <h3>Edit Rule</h3>
+                    </div>
+
+                    <div class="form-container">
+                        <form id="updateRuleForm" class="admin-form">
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label for="ruleId">
+                                        <i class="fas fa-hashtag"></i>
+                                        Rule ID *
+                                    </label>
+                                    <input type="number" id="ruleId" name="ruleId" readonly>
+                                </div>
+                                <div class="form-group">
+                                    <label for="ruleType">
+                                        <i class="fas fa-list"></i>
+                                        Rule Type
+                                    </label>
+                                    <select id="ruleType" name="ruleType">
+                                        <option value="MIN_ORDER_AMOUNT">MIN_ORDER_AMOUNT</option>
+                                        <option value="DAILY_ACTIVE_TIME">DAILY_ACTIVE_TIME</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label for="ruleStatus">
+                                        <i class="fas fa-toggle-on"></i>
+                                        Status
+                                    </label>
+                                    <select id="ruleStatus" name="isActive">
+                                        <option value="true">Active</option>
+                                        <option value="false">Inactive</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="form-group full-width">
+                                <label for="ruleDescription">
+                                    <i class="fas fa-align-left"></i>
+                                    Description
+                                </label>
+                                <textarea id="ruleDescription" name="description" rows="3"></textarea>
+                            </div>
+
+                            <div class="config-section">
+                                <h4>
+                                    <i class="fas fa-cog"></i>
+                                    Rule Configuration
+                                </h4>
+                                <div class="config-key-value" id="ruleConfigContainer">
+                                    <!-- Dynamic config fields will be added here -->
+                                </div>
+                            </div>
+
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-success">
+                                    <i class="fas fa-save"></i>
+                                    Update Rule
+                                </button>
+                                <button type="button" class="btn btn-secondary" onclick="showRuleList()">
+                                    <i class="fas fa-times"></i>
+                                    Cancel
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Collections Section -->
+            <section id="collections" class="content-section">
+                <div class="section-header">
+                    <h2>Collection Management</h2>
+                    <p>Configure rule sets applied to coupons</p>
+                </div>
+
+                <!-- Collection List View -->
+                <div id="collectionListView" class="list-view">
+                    <div class="list-header">
+                        <h3>Collection List</h3>
+                        <button class="btn btn-primary" onclick="loadCollections()">
+                            <i class="fas fa-sync-alt"></i>
+                            Refresh
+                        </button>
+                    </div>
+                    <div class="list-container">
+                        <div id="collectionList" class="data-list">
+                            <!-- Collections will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Collection Edit Form -->
+                <div id="collectionEditView" class="edit-view" style="display: none;">
+                    <div class="edit-header">
+                        <button class="btn btn-secondary" onclick="showCollectionList()">
+                            <i class="fas fa-arrow-left"></i>
+                            Back to List
+                        </button>
+                        <h3>Edit Collection</h3>
+                    </div>
+
+                    <div class="form-container">
+                        <form id="updateCollectionForm" class="admin-form">
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label for="collectionId">
+                                        <i class="fas fa-hashtag"></i>
+                                        Collection ID *
+                                    </label>
+                                    <input type="number" id="collectionId" name="collectionId" readonly>
+                                </div>
+                                <div class="form-group">
+                                    <label for="collectionName">
+                                        <i class="fas fa-tag"></i>
+                                        Collection Name *
+                                    </label>
+                                    <input type="text" id="collectionName" name="name" required>
+                                </div>
+                            </div>
+
+                            <div class="form-group full-width">
+                                <label for="collectionDescription">
+                                    <i class="fas fa-align-left"></i>
+                                    Description
+                                </label>
+                                <textarea id="collectionDescription" name="description" rows="3"></textarea>
+                            </div>
+
+                            <div class="config-section">
+                                <h4>
+                                    <i class="fas fa-cogs"></i>
+                                    Rules in Collection
+                                </h4>
+                                <div class="rule-selection">
+                                    <label>Select Rules:</label>
+                                    <div id="ruleCheckboxes" class="rule-checkboxes">
+                                        <!-- Rule checkboxes will be loaded here -->
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-success">
+                                    <i class="fas fa-save"></i>
+                                    Update Collection
+                                </button>
+                                <button type="button" class="btn btn-secondary" onclick="showCollectionList()">
+                                    <i class="fas fa-times"></i>
+                                    Cancel
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>

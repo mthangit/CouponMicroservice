@@ -12,6 +12,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Builder
 public class UserCouponClaimInfo{
+    private Long couponUserId;
     private Integer userId;
     private Integer couponId;
     private LocalDateTime claimedDate;

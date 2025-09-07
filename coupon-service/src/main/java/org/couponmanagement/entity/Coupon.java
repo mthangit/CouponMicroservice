@@ -11,6 +11,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.couponmanagement.grpc.annotation.PerformanceMonitor;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -32,6 +33,9 @@ public class Coupon {
 
     @Column(name = "collection_key_id")
     private Integer collectionKeyId;
+
+    @Column(name = "budget_id")
+    private Integer budgetId;
 
     @Column(name = "code", unique = true, nullable = false, length = 30)
     private String code;
@@ -129,6 +133,7 @@ public class Coupon {
     }
 
     @Transient
+    @PerformanceMonitor
     public BigDecimal calculateDiscount(BigDecimal orderAmount) {
         DiscountConfig config = getDiscountConfig();
 

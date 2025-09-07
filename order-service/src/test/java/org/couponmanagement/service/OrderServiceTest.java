@@ -5,6 +5,8 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import org.couponmanagement.coupon.CouponServiceGrpc;
 import org.couponmanagement.coupon.CouponServiceProto;
+import org.couponmanagement.dto.ProcessOrderRequest;
+import org.couponmanagement.dto.ProcessOrderResult;
 import org.couponmanagement.entity.Order;
 import org.couponmanagement.grpc.client.GrpcClientFactory;
 import org.couponmanagement.grpc.validation.RequestValidator;
@@ -44,12 +46,12 @@ class OrderServiceTest {
     @InjectMocks
     private OrderService orderService;
 
-    private OrderService.ProcessOrderRequest validRequest;
+    private ProcessOrderRequest validRequest;
     private Order savedOrder;
 
     @BeforeEach
     void setUp() {
-        validRequest = OrderService.ProcessOrderRequest.builder()
+        validRequest = ProcessOrderRequest.builder()
                 .userId(1)
                 .orderAmount(100.0)
                 .couponCode("DISCOUNT10")
@@ -99,18 +101,18 @@ class OrderServiceTest {
         when(orderRepository.save(any(Order.class))).thenReturn(savedOrder);
 
         // Act
-        OrderService.ProcessOrderResult result = orderService.processOrderManual(validRequest);
+        ProcessOrderResult result = orderService.processOrderManual(validRequest);
 
         // Assert
-        assertTrue(result.isSuccess());
-        assertEquals(1, result.getOrderId());
-        assertEquals(1, result.getUserId());
-        assertEquals(BigDecimal.valueOf(100.0), result.getOrderAmount());
-        assertEquals(BigDecimal.valueOf(10.0), result.getDiscountAmount());
-        assertEquals(BigDecimal.valueOf(90.0), result.getFinalAmount());
-        assertEquals("DISCOUNT10", result.getCouponCode());
-        assertEquals(123, result.getCouponId());
-        assertEquals("COMPLETED", result.getStatus());
+        assertTrue(result.success());
+        assertEquals(1, result.orderId());
+        assertEquals(1, result.userId());
+        assertEquals(BigDecimal.valueOf(100.0), result.orderAmount());
+        assertEquals(BigDecimal.valueOf(10.0), result.discountAmount());
+        assertEquals(BigDecimal.valueOf(90.0), result.finalAmount());
+        assertEquals("DISCOUNT10", result.couponCode());
+        assertEquals(123, result.couponId());
+        assertEquals("COMPLETED", result.status());
 
         verify(validator).validateUserId(1);
         verify(validator).validateOrderAmount(100.0);
@@ -141,11 +143,11 @@ class OrderServiceTest {
             .thenReturn(grpcResponse);
 
         // Act
-        OrderService.ProcessOrderResult result = orderService.processOrderManual(validRequest);
+        ProcessOrderResult result = orderService.processOrderManual(validRequest);
 
         // Assert
-        assertFalse(result.isSuccess());
-        assertEquals("Coupon not found", result.getErrorMessage());
+        assertFalse(result.success());
+        assertEquals("Coupon not found", result.errorMessage());
 
         verify(orderRepository, never()).save(any(Order.class));
     }
@@ -165,11 +167,11 @@ class OrderServiceTest {
             .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
 
         // Act
-        OrderService.ProcessOrderResult result = orderService.processOrderManual(validRequest);
+        ProcessOrderResult result = orderService.processOrderManual(validRequest);
 
         // Assert
-        assertFalse(result.isSuccess());
-        assertEquals("Coupon service unavailable", result.getErrorMessage());
+        assertFalse(result.success());
+        assertEquals("Coupon service unavailable", result.errorMessage());
 
         verify(orderRepository, never()).save(any(Order.class));
     }
@@ -177,7 +179,7 @@ class OrderServiceTest {
     @Test
     void processOrderAuto_Success() {
         // Arrange
-        OrderService.ProcessOrderRequest autoRequest = OrderService.ProcessOrderRequest.builder()
+        ProcessOrderRequest autoRequest = ProcessOrderRequest.builder()
                 .userId(1)
                 .orderAmount(100.0)
                 .orderDate(LocalDateTime.now())
@@ -220,13 +222,13 @@ class OrderServiceTest {
         when(orderRepository.save(any(Order.class))).thenReturn(autoSavedOrder);
 
         // Act
-        OrderService.ProcessOrderResult result = orderService.processOrderAuto(autoRequest);
+        ProcessOrderResult result = orderService.processOrderAuto(autoRequest);
 
         // Assert
-        assertTrue(result.isSuccess());
-        assertEquals(2, result.getOrderId());
-        assertEquals(BigDecimal.valueOf(20.0), result.getDiscountAmount());
-        assertEquals(BigDecimal.valueOf(80.0), result.getFinalAmount());
+        assertTrue(result.success());
+        assertEquals(2, result.orderId());
+        assertEquals(BigDecimal.valueOf(20.0), result.discountAmount());
+        assertEquals(BigDecimal.valueOf(80.0), result.finalAmount());
 
         verify(validator).validateUserId(1);
         verify(validator).validateOrderAmount(100.0);
@@ -236,7 +238,7 @@ class OrderServiceTest {
     @Test
     void processOrderAuto_NoCouponFound_StillSuccess() {
         // Arrange
-        OrderService.ProcessOrderRequest autoRequest = OrderService.ProcessOrderRequest.builder()
+        ProcessOrderRequest autoRequest = ProcessOrderRequest.builder()
                 .userId(1)
                 .orderAmount(100.0)
                 .orderDate(LocalDateTime.now())
@@ -266,13 +268,13 @@ class OrderServiceTest {
         when(orderRepository.save(any(Order.class))).thenReturn(orderWithoutDiscount);
 
         // Act
-        OrderService.ProcessOrderResult result = orderService.processOrderAuto(autoRequest);
+        ProcessOrderResult result = orderService.processOrderAuto(autoRequest);
 
         // Assert
-        assertTrue(result.isSuccess());
-        assertEquals(3, result.getOrderId());
-        assertEquals(BigDecimal.ZERO, result.getDiscountAmount());
-        assertEquals(BigDecimal.valueOf(100.0), result.getFinalAmount());
+        assertTrue(result.success());
+        assertEquals(3, result.orderId());
+        assertEquals(BigDecimal.ZERO, result.discountAmount());
+        assertEquals(BigDecimal.valueOf(100.0), result.finalAmount());
 
         verify(orderRepository).save(any(Order.class));
     }
@@ -284,11 +286,11 @@ class OrderServiceTest {
             .when(validator).validateUserId(anyInt());
 
         // Act
-        OrderService.ProcessOrderResult result = orderService.processOrderManual(validRequest);
+        ProcessOrderResult result = orderService.processOrderManual(validRequest);
 
         // Assert
-        assertFalse(result.isSuccess());
-        assertTrue(result.getErrorMessage().contains("Failed to process order"));
+        assertFalse(result.success());
+        assertTrue(result.errorMessage().contains("Failed to process order"));
 
         verify(orderRepository, never()).save(any(Order.class));
     }

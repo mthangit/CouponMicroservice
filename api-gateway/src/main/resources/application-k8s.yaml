@@ -1,0 +1,158 @@
+spring:
+  application:
+    name: api-gateway
+
+  data:
+    redis:
+      host: order-redis
+      port: 6379
+      database: 0
+      timeout: 2000ms
+      connect-timeout: 2000ms
+      command-timeout: 5000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-wait: -1ms
+          max-idle: 8
+          min-idle: 0
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+server:
+  port: 8080
+  servlet:
+    context-path: /
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain
+
+thread-pool:
+  core-size: ${THREAD_POOL_CORE_SIZE:5}
+  max-size: ${THREAD_POOL_MAX_SIZE:10}
+  keep-alive-seconds: ${THREAD_POOL_KEEP_ALIVE:60}
+  queue-capacity: ${THREAD_POOL_QUEUE_CAPACITY:100}
+
+
+app:
+  version: "1.0.0"
+  deployment:
+    id: "gateway-deploy-001"
+  debug:
+    enabled: true
+  identity:
+    x-client-key: sk_gateway_def456
+    x-service-id: api-gateway
+
+grpc:
+  server:
+    port: -1
+  client:
+    order-service:
+      address: static://order-service:9090
+      negotiation-type: plaintext
+    coupon-service:
+      address: static://coupon-service:9090
+      negotiation-type: plaintext
+    rule-service:
+      address: static://rule-service:9090
+      negotiation-type: plaintext
+
+jwt:
+  secret: ${JWT_SECRET:my-secret-key-for-development-only-must-be-at-least-32-characters}
+  expiration: 86400
+
+cors:
+  allowed-origins: "*"
+
+api:
+  rate-limit:
+    enabled: true
+    requests-per-minute: 1000
+    requests-per-hour: 10000
+
+security:
+  jwt:
+    header: Authorization
+    prefix: "Bearer "
+  public-endpoints: /actuator/**,/api/v1/health,/api/v1/auth/**,/api/v1/performance/**,/,/swagger-ui.html,/swagger-ui/**,/api-docs,/api-docs/**
+  admin-endpoints: "/api/v1/admin/**"
+
+management:
+  server:
+    port: 8080
+  tracing:
+    sampling:
+      probability: 1.0
+    exclude-patterns: /actuator/**
+  otlp:
+    tracing:
+      endpoint: http://jaeger:4318/v1/traces
+  observations:
+    key-values:
+      application: ${spring.application.name}
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,loggers
+      base-path: /actuator
+    health:
+      show-details: always
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+        step: 10s
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        coupon.application.duration: true
+      percentiles:
+        http.server.requests: 0.5, 0.95, 0.99
+        coupon.application.duration: 0.5, 0.95, 0.99
+    tags:
+      application: ${spring.application.name}
+      service: api-gateway
+      environment: development
+
+otel:
+  service:
+    name: ${spring.application.name}
+  exporter:
+    otlp:
+      endpoint: http://jaeger:4318
+  resource:
+    attributes:
+      service.name: ${spring.application.name}
+      service.version: ${app.version}
+
+logging:
+  level:
+    org.couponmanagement: DEBUG
+    org.springframework.security: DEBUG
+    net.devh.boot.grpc: DEBUG
+    org.springframework.web: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level [%X{traceId},%X{spanId}] %logger{36} - %msg%n"
+    level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
+
+trusted-callers:
+  callers:
+    coupon-service:
+      client-key: sk_coupon_abc123
+      permissions:
+        - USE_COUPON
+    order-service:
+      client-key: sk_order_xyz789
+      permissions:
+        - USE_COUPON
+        - FIND_BEST_COUPON
+        - VALIDATE_COUPON

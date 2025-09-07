@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package org.couponmanagement.budget;
+import "google/protobuf/struct.proto";
+
+option java_package = "org.couponmanagement.budget";
+option java_outer_classname = "BudgetServiceProto";
+
+enum StatusCode {
+  UNKNOWN = 0;
+  OK = 1;
+  INVALID_ARGUMENT = 2;
+  NOT_FOUND = 3;
+  INTERNAL = 4;
+  UNAUTHENTICATED = 5;
+  PERMISSION_DENIED = 6;
+}
+
+message Status {
+  StatusCode code = 1;
+  string message = 2;
+}
+
+message Error {
+  string code = 1;
+  string message = 2;
+  map<string, string> details = 3;
+}
+
+service BudgetService {
+  rpc Register(RegisterBudgetCouponRequest) returns (RegisterBudgetCouponResponse);
+  rpc Confirm(ConfirmBudgetCouponRequest) returns (ConfirmBudgetCouponResponse);
+}
+
+message RegisterBudgetCouponRequest {
+  string request_id = 1;
+  int32 user_id = 2;
+  int32 coupon_id = 3;
+  int32 budget_id = 4;
+  int64 coupon_user_id = 5;
+  double discount_amount = 6;
+}
+
+message RegisterBudgetCouponResponsePayload {
+  bool success = 1;
+  string message = 2;
+  string reserved_budget_id = 3;
+}
+
+message RegisterBudgetCouponResponse {
+  Status status = 1;
+  RegisterBudgetCouponResponsePayload payload = 2;
+  Error error = 3;
+}
+
+message ConfirmBudgetCouponRequest {
+  string request_id = 1;
+  int32 user_id = 2;
+  int32 coupon_id = 3;
+  int32 order_id = 4;
+  int32 budget_id = 5;
+  int32 reserved_budget_id = 6;
+  double discount_amount = 7;
+}
+
+message ConfirmBudgetCouponResponsePayload {
+  bool success = 1;
+  string message = 2;
+}
+
+message ConfirmBudgetCouponResponse {
+  Status status = 1;
+  ConfirmBudgetCouponResponsePayload payload = 2;
+  Error error = 3;
+}

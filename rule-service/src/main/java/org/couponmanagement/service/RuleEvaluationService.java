@@ -4,11 +4,14 @@ import io.micrometer.observation.annotation.Observed;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.couponmanagement.cache.RuleCacheService;
+import org.couponmanagement.dto.RuleErrorCode;
+import org.couponmanagement.engine.MinOrderAmountRuleHandler;
 import org.couponmanagement.engine.RuleEvaluationContext;
 import org.couponmanagement.engine.RuleHandler;
 import org.couponmanagement.entity.Rule;
 import org.couponmanagement.entity.RuleCollection;
 import org.couponmanagement.grpc.annotation.PerformanceMonitor;
+import org.couponmanagement.performance.ErrorMetricsRegistry;
 import org.couponmanagement.repository.RuleCollectionRepository;
 import org.couponmanagement.repository.RuleRepository;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -31,6 +34,9 @@ public class RuleEvaluationService {
     private final RuleCacheService ruleCacheService;
     private final Map<String, RuleHandler> ruleHandlerMap;
     private final Executor ruleEvaluationExecutor;
+    private final Executor collectionRuleEvaluationExecutor;
+    private final ErrorMetricsRegistry errorMetricsRegistry;
+
 
     private final ConcurrentHashMap<String, RuleHandler> handlerCache = new ConcurrentHashMap<>();
 
@@ -39,12 +45,16 @@ public class RuleEvaluationService {
             RuleRepository ruleRepository,
             RuleCacheService ruleCacheService,
             @Qualifier("ruleHandlerMap") Map<String, RuleHandler> ruleHandlerMap,
-            @Qualifier("ruleEvaluationExecutor") Executor ruleEvaluationExecutor) {
+            @Qualifier("ruleEvaluationExecutor") Executor ruleEvaluationExecutor,
+            @Qualifier("collectionRuleEvaluationExecutor") Executor collectionRuleEvaluationExecutor,
+            ErrorMetricsRegistry errorMetricsRegistry){
         this.ruleCollectionRepository = ruleCollectionRepository;
         this.ruleRepository = ruleRepository;
         this.ruleCacheService = ruleCacheService;
         this.ruleHandlerMap = ruleHandlerMap;
         this.ruleEvaluationExecutor = ruleEvaluationExecutor;
+        this.collectionRuleEvaluationExecutor = collectionRuleEvaluationExecutor;
+        this.errorMetricsRegistry = errorMetricsRegistry;
     }
 
     public record RuleCollectionEvaluationResult(
@@ -68,9 +78,11 @@ public class RuleEvaluationService {
 
     @Observed(name = "evaluate-rule-collection")
     public RuleCollectionEvaluationResult evaluateRuleCollection(Integer collectionId, RuleEvaluationContext context) {
-        log.info("Evaluating rule collection with context: id={}, context={}", collectionId, context);
-
         try {
+
+            if (collectionId == 0) {
+                return new RuleCollectionEvaluationResult(collectionId, true, null);
+            }
 
             if (context == null || context.getOrderAmount() == null) {
                 return new RuleCollectionEvaluationResult(collectionId, false, "Invalid evaluation context or order amount");
@@ -121,6 +133,9 @@ public class RuleEvaluationService {
 
             log.debug("Rule {} evaluation: type={}, result={}, time={}ms", 
                      rule.getId(), rule.getType(), result, evaluationTime);
+
+
+
             return result;
 
         } catch (Exception e) {
@@ -129,7 +144,18 @@ public class RuleEvaluationService {
         }
     }
 
+    public List<RuleEvaluationResult> evaluateRules(List<Rule> rules, RuleEvaluationContext context) {
+        if (rules == null || rules.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        return rules.stream()
+                .map(rule -> evaluateRuleWithDetails(rule, context))
+                .collect(Collectors.toList());
+    }
+
     @PerformanceMonitor
+    @Observed(name = "evaluate-rules-parallel", contextualName = "RuleEvaluationService.evaluateRulesParallel")
     public List<RuleEvaluationResult> evaluateRulesParallel(List<Rule> rules, RuleEvaluationContext context) {
         if (rules == null || rules.isEmpty()) {
             return new ArrayList<>();
@@ -137,7 +163,7 @@ public class RuleEvaluationService {
 
         log.debug("Evaluating {} rules in parallel", rules.size());
 
-        List<CompletableFuture<RuleEvaluationResult>> futures = rules.parallelStream()
+        List<CompletableFuture<RuleEvaluationResult>> futures = rules.stream()
                 .map(rule -> CompletableFuture.supplyAsync(() -> evaluateRuleWithDetails(rule, context), ruleEvaluationExecutor))
                 .toList();
 
@@ -152,7 +178,7 @@ public class RuleEvaluationService {
             futures.forEach(future -> future.cancel(true));
         }
 
-        return futures.stream()
+        return futures.parallelStream()
                 .map(future -> {
                     try {
                         return future.get();
@@ -189,6 +215,15 @@ public class RuleEvaluationService {
             }
 
             boolean result = handler.check(config, context);
+
+            if (!result){
+                if (handler instanceof MinOrderAmountRuleHandler){
+                    errorMetricsRegistry.incrementBusinessError(String.valueOf(RuleErrorCode.MIN_ORDER_AMOUNT_NOT_MET), "RuleService");
+                } else {
+                    errorMetricsRegistry.incrementBusinessError(String.valueOf(RuleErrorCode.NOT_IN_TIME_RANGE), "RuleService");
+                }
+            }
+
             long evaluationTime = System.currentTimeMillis() - startTime;
 
             return new RuleEvaluationResult(
@@ -219,28 +254,34 @@ public class RuleEvaluationService {
 
     @Observed(name = "evaluate-multiple-collections")
     @PerformanceMonitor
-    public List<RuleCollectionEvaluationResult> evaluateMultipleCollections(Integer collectionId, RuleEvaluationContext context) {
-        log.info("Evaluating first collection from collections with context: {}", collectionId, context);
-
+    public List<RuleCollectionEvaluationResult> evaluateMultipleCollections(List<Integer> collectionIds, RuleEvaluationContext context) {
         if (context == null || context.getOrderAmount() == null) {
             return List.of(new RuleCollectionEvaluationResult(null, false, "Invalid evaluation context or order amount"));
         }
 
-        if (collectionId == null) {
+        if (collectionIds == null) {
             return List.of(new RuleCollectionEvaluationResult(null, false, "No collection IDs provided"));
         }
 
-        try {
-            RuleCollectionEvaluationResult result = evaluateRuleCollection(collectionId, context);
-            log.debug("Collection {} evaluation result: success={}, error={}",
-                    collectionId, result.success(), result.errorMessage());
-            return List.of(result);
-        } catch (Exception e) {
-            log.error("Error evaluating collection {}: {}", collectionId, e);
-            return List.of(new RuleCollectionEvaluationResult(collectionId, false, "Internal error: " + e.getMessage()));
-        }
+        List<CompletableFuture<RuleCollectionEvaluationResult>> futures = collectionIds.stream().
+                map(collectionId -> CompletableFuture.supplyAsync(() -> {
+                    try{
+                        return evaluateRuleCollection(collectionId, context);
+                    } catch (Exception e) {
+                        log.error("Error evaluating collection {}: ", collectionId, e);
+                        return new RuleCollectionEvaluationResult(collectionId, false, "Internal error: " + e.getMessage());
+                    }
+                }, collectionRuleEvaluationExecutor))
+                .toList();
+
+        return futures.stream()
+                .map(CompletableFuture::join)
+                .toList();
     }
 
+
+
+    @Observed(name = "load-rule-collection-with-rules")
     private RuleCollectionWithRules loadRuleCollectionWithRules(Integer collectionId) {
         try {
             Optional<RuleCacheService.RuleCollectionCacheInfo> cachedCollectionInfo =
@@ -250,7 +291,6 @@ public class RuleEvaluationService {
             List<Rule> rules = new ArrayList<>();
 
             if (cachedCollectionInfo.isPresent()) {
-                log.debug("Using cached rule collection: {}", collectionId);
                 RuleCacheService.RuleCollectionCacheInfo collectionInfo = cachedCollectionInfo.get();
                 
                 collection = new RuleCollection();
@@ -283,7 +323,6 @@ public class RuleEvaluationService {
                 }
             }
 
-            log.debug("Loaded rule collection: {} with {} rules", collectionId, rules.size());
             return new RuleCollectionWithRules(collection, rules);
 
         } catch (Exception e) {
@@ -301,7 +340,6 @@ public class RuleEvaluationService {
                 ruleCacheService.getCachedRuleConfig(ruleId);
             
             if (cachedRuleInfo.isPresent()) {
-                log.debug("Using cached rule config: {}", ruleId);
                 rules.add(convertCacheInfoToRule(cachedRuleInfo.get()));
             } else {
                 uncachedRuleIds.add(ruleId);
@@ -309,7 +347,6 @@ public class RuleEvaluationService {
         }
 
         if (!uncachedRuleIds.isEmpty()) {
-            log.debug("Loading {} uncached rules from database: {}", uncachedRuleIds.size(), uncachedRuleIds);
             List<Rule> dbRules = ruleRepository.findByIdIn(uncachedRuleIds);
             
             for (Rule rule : dbRules) {
@@ -333,16 +370,15 @@ public class RuleEvaluationService {
         return rule;
     }
 
-    @Observed(name = "evaluate-rules-parallel")
+    @Observed(name = "evaluate-rules")
     private String evaluateRulesParallelAndCheckFailure(List<Rule> rules, RuleEvaluationContext context) {
         if (rules == null || rules.isEmpty()) {
             return "No rules to evaluate";
         }
 
-        log.debug("Starting parallel evaluation using evaluateRulesParallel for {} rules", rules.size());
         long startTime = System.currentTimeMillis();
 
-        List<RuleEvaluationResult> results = evaluateRulesParallel(rules, context);
+        List<RuleEvaluationResult> results = evaluateRules(rules, context);
 
         String combinedErrorMessages = results.parallelStream()
                 .filter(result -> !result.success())
@@ -351,7 +387,6 @@ public class RuleEvaluationService {
                 .collect(Collectors.joining(", "));
 
         long evaluationTime = System.currentTimeMillis() - startTime;
-        log.debug("Parallel evaluation using evaluateRulesParallel completed in {}ms for {} rules", evaluationTime, rules.size());
 
         return combinedErrorMessages.isEmpty() ? null : combinedErrorMessages;
     }

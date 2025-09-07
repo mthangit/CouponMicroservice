@@ -35,7 +35,6 @@ public class GrpcServerInterceptor implements ServerInterceptor {
             call.close(Status.UNAUTHENTICATED.withDescription("Invalid client-key for service: " + serviceId), new Metadata());
             return new ServerCall.Listener<>() {};
         }
-        log.info("Authenticated service: {} for method: {}", serviceId, call.getMethodDescriptor().getFullMethodName());
 
         List<String> permissions = trustedCallersProperties.getCallers().get(serviceId).getPermissions();
 

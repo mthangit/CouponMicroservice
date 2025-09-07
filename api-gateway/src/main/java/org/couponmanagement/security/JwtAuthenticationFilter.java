@@ -115,7 +115,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private boolean isPublicEndpoint(String requestPath) {
         return publicEndpoints.stream()
                 .anyMatch(endpoint -> {
-                    // Handle wildcard patterns
                     if (endpoint.endsWith("/**")) {
                         String basePath = endpoint.substring(0, endpoint.length() - 3);
                         return requestPath.startsWith(basePath);

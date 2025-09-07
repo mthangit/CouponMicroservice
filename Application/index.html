@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quản lý Coupon - Zalopay</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="container">
+  <header class="header">
+    <div class="header-content">
+      <h1>Coupon Zalopay</h1>
+    </div>
+  </header>
+
+  <!-- Login Form -->
+  <div id="loginSection">
+    <h2>Đăng nhập</h2>
+    <form id="loginForm">
+      <div class="form-group">
+        <label for="loginUsername">Tên đăng nhập</label>
+        <input type="text" id="loginUsername" required />
+      </div>
+      <div class="form-group">
+        <label for="loginPassword">Mật khẩu</label>
+        <input type="password" id="loginPassword" required />
+      </div>
+      <button type="submit" class="btn btn-primary">Đăng nhập</button>
+      <div id="loginError" class="error-message"></div>
+    </form>
+  </div>
+
+  <div id="appSection" style="display:none;">
+    <div class="main-content">
+      <!-- Tab Navigation -->
+      <div class="tab-navigation">
+        <button class="tab-btn active" data-tab="coupons">
+          Danh sách Coupon
+        </button>
+        <button class="tab-btn" data-tab="order">
+          Tính toán đơn hàng
+        </button>
+        <button id="logoutBtn" style="float:right;">Đăng xuất</button>
+      </div>
+
+      <!-- Coupon List Tab -->
+      <div id="coupons" class="tab-content active">
+        <div class="section-header">
+          <h2>Danh sách mã giảm giá</h2>
+          <div class="page-size-selector">
+            <label for="pageSize">Hiển thị:</label>
+            <select id="pageSize">
+              <option value="5">5</option>
+              <option value="10" selected>10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
+            </select>
+            <span>mã/trang</span>
+          </div>
+        </div>
+        <div class="coupon-grid" id="couponGrid">
+          <!-- Coupon cards sẽ được load bởi JavaScript -->
+        </div>
+        <div class="pagination-container" id="paginationContainer" style="display: none;">
+          <div class="pagination-info" id="paginationInfo"></div>
+          <div class="pagination-controls" id="paginationControls"></div>
+        </div>
+      </div>
+
+      <!-- Order Calculation Tab -->
+      <div id="order" class="tab-content">
+        <div class="section-header">
+          <h2>Tính toán giảm giá đơn hàng</h2>
+          <div class="header-actions">
+            <button type="button" class="btn btn-secondary" onclick="clearOrderForm()">
+              Xóa form
+            </button>
+          </div>
+        </div>
+
+        <!-- Order Form -->
+        <div class="order-form-card">
+          <div class="card-header">
+            <h3>Thông tin đơn hàng</h3>
+          </div>
+          <div class="card-body">
+            <form id="orderForm" class="order-form" method="post" action="javascript:void(0)">
+              <div class="form-grid">
+                <div class="form-group">
+                  <label for="totalAmount">
+                    Số tiền đơn hàng <span class="required">*</span>
+                  </label>
+                  <div class="input-wrapper">
+                    <input type="number"
+                           id="totalAmount"
+                           name="totalAmount"
+                           required
+                           placeholder="Nhập số tiền..."
+                           class="currency-input">
+                    <span class="input-suffix">VNĐ</span>
+                  </div>
+                </div>
+
+                <div class="form-group">
+                  <label for="orderDate">
+                    Ngày tạo đơn hàng <span class="required">*</span>
+                  </label>
+                  <input type="datetime-local" id="orderDate" name="orderDate" disabled >
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="orderCouponCode">
+                  Mã giảm giá
+                </label>
+                <div class="input-wrapper">
+                  <input type="text"
+                         id="orderCouponCode"
+                         name="couponCode"
+                         placeholder="Nhập mã coupon hoặc để trống..."
+                         class="coupon-code-input">
+                </div>
+                <div id="couponValidation" class="coupon-validation"></div>
+              </div>
+
+              <div class="form-actions">
+                <button type="submit" class="btn btn-primary btn-calculate">
+                  Tính toán đơn hàng
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Order Result -->
+        <div class="order-result-card">
+          <div class="card-header">
+            <h3>Kết quả tính toán</h3>
+          </div>
+          <div class="card-body">
+            <div id="orderResult" class="order-result-content">
+              <div class="empty-result">
+                <p>Nhập thông tin đơn hàng và nhấn "Tính toán" để xem kết quả</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

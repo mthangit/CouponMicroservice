@@ -15,7 +15,6 @@ public class GrpcClientInterceptor implements ClientInterceptor {
 
     @Override
     public <ReqT, RespT> ClientCall<ReqT, RespT> interceptCall(MethodDescriptor<ReqT, RespT> method, CallOptions callOptions, Channel next) {
-        log.info(">>> GrpcClientInterceptor.interceptCall() called for method: {}", method.getFullMethodName());
 
         return new ForwardingClientCall.SimpleForwardingClientCall<>(next.newCall(method, callOptions)) {
             @Override

@@ -22,59 +22,32 @@ public class RuleCacheService {
     public void cacheRuleCollection(Integer collectionId, RuleCollectionCacheInfo ruleCollectionInfo) {
         String key = cacheProperties.getRuleCollectionKey(collectionId);
         cacheService.put(key, ruleCollectionInfo, cacheProperties.getRuleCollectionTtlSeconds());
-        log.debug("Cached rule collection: collectionId={}, ttl={}s", collectionId, cacheProperties.getRuleCollectionTtlSeconds());
     }
 
+    @Observed(name = "getCachedRuleCollection", contextualName = "RuleCacheService.getCachedRuleCollection")
     public Optional<RuleCollectionCacheInfo> getCachedRuleCollection(Integer collectionId) {
         String key = cacheProperties.getRuleCollectionKey(collectionId);
-        Optional<RuleCollectionCacheInfo> result = cacheService.get(key, RuleCollectionCacheInfo.class);
-
-        if (result.isPresent()) {
-            log.debug("Cache hit for rule collection: {}", collectionId);
-        } else {
-            log.debug("Cache miss for rule collection: {}", collectionId);
-        }
-
-        return result;
+        return cacheService.get(key, RuleCollectionCacheInfo.class);
     }
     
     public void cacheRuleConfig(Integer ruleId, RuleConfigCacheInfo ruleConfigInfo) {
         String key = cacheProperties.getRuleConfigKey(ruleId);
         cacheService.put(key, ruleConfigInfo, cacheProperties.getRuleConfigTtlSeconds());
-        log.debug("Cached rule config: ruleId={}, ttl={}s", ruleId, cacheProperties.getRuleConfigTtlSeconds());
     }
 
     public Optional<RuleConfigCacheInfo> getCachedRuleConfig(Integer ruleId) {
         String key = cacheProperties.getRuleConfigKey(ruleId);
-        Optional<RuleConfigCacheInfo> result = cacheService.get(key, RuleConfigCacheInfo.class);
-
-        if (result.isPresent()) {
-            log.debug("Cache hit for rule config: {}", ruleId);
-        } else {
-            log.debug("Cache miss for rule config: {}", ruleId);
-        }
-
-        return result;
+        return cacheService.get(key, RuleConfigCacheInfo.class);
     }
     
     public void cacheRuleCollectionWithRules(Integer collectionId, RuleCollectionWithRulesCacheInfo collectionWithRules) {
         String key = cacheProperties.getRuleCollectionWithRulesKey(collectionId);
         cacheService.put(key, collectionWithRules, cacheProperties.getRuleCollectionTtlSeconds());
-        log.debug("Cached rule collection with rules: collectionId={}, rulesCount={}, ttl={}s",
-                collectionId, collectionWithRules.getRules().size(), cacheProperties.getRuleCollectionTtlSeconds());
     }
 
     public Optional<RuleCollectionWithRulesCacheInfo> getCachedRuleCollectionWithRules(Integer collectionId) {
         String key = cacheProperties.getRuleCollectionWithRulesKey(collectionId);
-        Optional<RuleCollectionWithRulesCacheInfo> result = cacheService.get(key, RuleCollectionWithRulesCacheInfo.class);
-
-        if (result.isPresent()) {
-            log.debug("Cache hit for rule collection with rules: {}", collectionId);
-        } else {
-            log.debug("Cache miss for rule collection with rules: {}", collectionId);
-        }
-
-        return result;
+        return cacheService.get(key, RuleCollectionWithRulesCacheInfo.class);
     }
 
     public void invalidateRuleCollectionCache(Integer collectionId) {

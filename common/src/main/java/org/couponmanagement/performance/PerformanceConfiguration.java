@@ -1,20 +1,17 @@
 package org.couponmanagement.performance;
 
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.prometheusmetrics.PrometheusConfig;
-import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
+/**
+ * Cấu hình performance monitoring cho các service
+ * Đã loại bỏ custom MeterRegistry bean để sử dụng Spring Boot auto-configuration
+ * với micrometer-registry-prometheus dependency
+ */
 @Configuration
 @EnableAspectJAutoProxy
 public class PerformanceConfiguration {
-
-    @Bean
-    @ConditionalOnMissingBean
-    public MeterRegistry meterRegistry() {
-        return new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
-    }
+    // Đã xóa custom MeterRegistry bean
+    // Spring Boot sẽ tự động tạo PrometheusMeterRegistry
+    // khi có micrometer-registry-prometheus dependency
 }

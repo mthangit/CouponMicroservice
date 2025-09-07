@@ -189,6 +189,7 @@ public class CacheWarmupService {
 
     private UserCouponClaimInfo convertToUserCouponClaimInfo(CouponUser couponUser) {
         return UserCouponClaimInfo.builder()
+                .couponUserId(couponUser.getId())
             .couponId(couponUser.getCouponId())
             .userId(couponUser.getUserId())
             .claimedDate(couponUser.getClaimedAt())

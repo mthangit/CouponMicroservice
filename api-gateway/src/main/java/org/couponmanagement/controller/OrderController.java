@@ -3,6 +3,7 @@ package org.couponmanagement.controller;
 import io.micrometer.observation.annotation.Observed;
 import jakarta.validation.Valid;
 import org.couponmanagement.dto.ProcessOrderRequest;
+import org.couponmanagement.dto.response.ApiResponse;
 import org.couponmanagement.dto.response.ProcessOrderResponse;
 import org.couponmanagement.dto.response.ErrorResponse;
 import org.couponmanagement.grpc.OrderServiceClient;
@@ -30,7 +31,6 @@ public class OrderController {
             log.info("Process order: user={}, amount={}", request.getUserId(), request.getOrderAmount());
 
 
-            // Convert DTO to protobuf
             OrderServiceProto.ProcessOrderRequest.Builder protoRequestBuilder = OrderServiceProto.ProcessOrderRequest.newBuilder()
                     .setUserId(request.getUserId())
                     .setOrderAmount(request.getOrderAmount());
@@ -52,7 +52,6 @@ public class OrderController {
             OrderServiceProto.ProcessOrderResponse response = orderServiceClient.processOrder(protoRequestBuilder.build());
 
             if (response.getStatus().getCode() == OrderServiceProto.StatusCode.OK) {
-                // Convert protobuf response to DTO
                 ProcessOrderResponse orderResponse = ProcessOrderResponse.builder()
                         .orderId(response.getPayload().getOrderId())
                         .userId(response.getPayload().getUserId())
@@ -65,7 +64,7 @@ public class OrderController {
                         .status(response.getPayload().getStatus())
                         .build();
 
-                return ResponseEntity.ok(orderResponse);
+                return ResponseEntity.ok(ApiResponse.success(orderResponse));
             } else {
                 // Convert protobuf error to DTO
                 ErrorResponse errorResponse = ErrorResponse.builder()
@@ -74,7 +73,7 @@ public class OrderController {
                         .details(response.getError().getDetailsMap())
                         .build();
 
-                return ResponseEntity.badRequest().body(errorResponse);
+                return ResponseEntity.ok(ApiResponse.error(response.getStatus().getCode().name(), errorResponse));
             }
         } catch (Exception e) {
             log.error("Error in process order: {}", e.getMessage(), e);

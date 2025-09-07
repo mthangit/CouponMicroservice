@@ -1,5 +1,6 @@
 package org.couponmanagement.entity;
 
+import io.micrometer.observation.annotation.Observed;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -7,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.couponmanagement.dto.CouponDetail;
 import org.couponmanagement.dto.UserCouponClaimInfo;
+import org.couponmanagement.grpc.annotation.PerformanceMonitor;
 import org.couponmanagement.service.CouponApplicationResult;
 
 import java.time.LocalDateTime;
@@ -65,7 +67,8 @@ public class CouponUser {
         CLAIMED,
         USED,
     }
-    
+
+    @PerformanceMonitor
     public void markAsUsed() {
         this.status = CouponUserStatus.USED;
         this.usedAt = LocalDateTime.now();
@@ -83,10 +86,15 @@ public class CouponUser {
         return status == CouponUserStatus.CLAIMED;
     }
 
+    @PerformanceMonitor
+    @Observed(name = "buildFromDetailAndClaimInfo", contextualName = "CouponUser.buildFromDetailAndClaimInfo")
     public static CouponUser buildFromDetailAndClaimInfo(CouponDetail couponDetail, UserCouponClaimInfo claimInfo) {
         Coupon coupon = Coupon.builder()
                 .id(couponDetail.getCouponId())
                 .code(couponDetail.getCouponCode())
+                .collectionKeyId(couponDetail.getCollectionKeyId())
+                .type(couponDetail.getType())
+                .budgetId(couponDetail.getBudgetId())
                 .title(couponDetail.getTitle())
                 .description(couponDetail.getDescription())
                 .discountConfigJson(couponDetail.getDiscountConfigJson())
@@ -95,6 +103,7 @@ public class CouponUser {
                 .expiryDate(couponDetail.getExpiryDate())
                 .build();
         return CouponUser.builder()
+                .id(claimInfo.getCouponUserId())
                 .userId(claimInfo.getUserId())
                 .couponId(claimInfo.getCouponId())
                 .claimedAt(claimInfo.getClaimedDate())

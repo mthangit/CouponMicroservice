@@ -46,43 +46,33 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
 
     @Autowired
     private RuleCacheService ruleCacheService;
-
+    
     @Override
     @Observed(name = "evaluate-rule-collections")
     public void evaluateRuleCollections(RuleServiceProto.EvaluateRuleRequest request,
                                        StreamObserver<RuleServiceProto.EvaluateRuleResponse> responseObserver) {
-        // Add multiple log levels to test
-        System.out.println("=== gRPC method called - System.out.println ===");
-        log.error("ERROR level: Received gRPC request - this should always show");
-        log.warn("WARN level: Received gRPC request - this should show");
-        log.info("INFO level: Received gRPC request: requestId={}, userId={}, collectionIds={}, orderAmount={}",
-                request.getRequestId(), request.getUserId(), request.getRuleCollectionIdsList(), request.getOrderAmount());
-        log.debug("DEBUG level: Processing gRPC request with details");
-
         try {
             log.info("Starting validation...");
             validator.validateRequestId(request.getRequestId());
             validator.validateUserId(request.getUserId());
             validator.validateCollectionIds(request.getRuleCollectionIdsList());
             validator.validateOrderAmount(request.getOrderAmount());
-            if (request.getDiscountAmount() != 0.0) {
-                validator.validateDiscountAmount(request.getDiscountAmount());
-            }
             LocalDateTime evaluationTime = parseOrderDateTime(request.getOrderDate());
 
             RuleEvaluationContext context = new RuleEvaluationContext(
                     request.getOrderAmount(),
                     evaluationTime,
                     request.getUserId(),
-                    request.getOrderDate(),
-                    request.getDiscountAmount()
+                    request.getOrderDate()
             );
 
             List<RuleEvaluationService.RuleCollectionEvaluationResult> evalResults =
-                    ruleEvaluationService.evaluateMultipleCollections(request.getRuleCollectionIdsList().getFirst(), context);
+                    ruleEvaluationService.evaluateMultipleCollections(request.getRuleCollectionIdsList(), context);
 
-            List<RuleServiceProto.RuleCollectionResult> results = new ArrayList<>(evalResults.stream()
-                    .filter(r -> !r.success())
+
+
+            List<RuleServiceProto.RuleCollectionResult> results = new ArrayList<>(evalResults.parallelStream()
+                    .filter( r -> !r.success())
                     .map(r -> RuleServiceProto.RuleCollectionResult.newBuilder()
                             .setRuleCollectionId(r.collectionId())
                             .setIsSuccess(false)
@@ -94,7 +84,6 @@ public class RuleGrpcService extends RuleServiceGrpc.RuleServiceImplBase {
                     .setRequestId(request.getRequestId())
                     .setUserId(request.getUserId())
                     .setOrderAmount(request.getOrderAmount())
-                    .setDiscountAmount(request.getDiscountAmount())
                     .setOrderDate(request.getOrderDate())
                     .addAllRuleCollectionResults(results)
                     .build();

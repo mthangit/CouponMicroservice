@@ -1,6 +1,8 @@
 package org.couponmanagement.grpc;
 
 import io.grpc.stub.StreamObserver;
+import org.couponmanagement.dto.ProcessOrderRequest;
+import org.couponmanagement.dto.ProcessOrderResult;
 import org.couponmanagement.grpc.validation.RequestValidator;
 import org.couponmanagement.order.OrderServiceProto;
 import org.couponmanagement.service.OrderService;
@@ -54,7 +56,7 @@ class OrderGrpcServiceTest {
         doNothing().when(validator).validateOrderAmount(anyDouble());
         doNothing().when(validator).validateRequestId(anyString());
 
-        OrderService.ProcessOrderResult successResult = OrderService.ProcessOrderResult.builder()
+        ProcessOrderResult successResult = ProcessOrderResult.builder()
                 .success(true)
                 .orderId(1)
                 .userId(1)
@@ -67,7 +69,7 @@ class OrderGrpcServiceTest {
                 .status("COMPLETED")
                 .build();
 
-        when(orderService.processOrderManual(any(OrderService.ProcessOrderRequest.class)))
+        when(orderService.processOrderManual(any(ProcessOrderRequest.class)))
                 .thenReturn(successResult);
 
         // Act
@@ -107,7 +109,7 @@ class OrderGrpcServiceTest {
         doNothing().when(validator).validateOrderAmount(anyDouble());
         doNothing().when(validator).validateRequestId(anyString());
 
-        OrderService.ProcessOrderResult successResult = OrderService.ProcessOrderResult.builder()
+        ProcessOrderResult successResult = ProcessOrderResult.builder()
                 .success(true)
                 .orderId(2)
                 .userId(1)
@@ -120,7 +122,7 @@ class OrderGrpcServiceTest {
                 .status("COMPLETED")
                 .build();
 
-        when(orderService.processOrderAuto(any(OrderService.ProcessOrderRequest.class)))
+        when(orderService.processOrderAuto(any(ProcessOrderRequest.class)))
                 .thenReturn(successResult);
 
         // Act
@@ -148,12 +150,12 @@ class OrderGrpcServiceTest {
         doNothing().when(validator).validateOrderAmount(anyDouble());
         doNothing().when(validator).validateRequestId(anyString());
 
-        OrderService.ProcessOrderResult failureResult = OrderService.ProcessOrderResult.builder()
+        ProcessOrderResult failureResult = ProcessOrderResult.builder()
                 .success(false)
                 .errorMessage("Coupon not found")
                 .build();
 
-        when(orderService.processOrderManual(any(OrderService.ProcessOrderRequest.class)))
+        when(orderService.processOrderManual(any(ProcessOrderRequest.class)))
                 .thenReturn(failureResult);
 
         // Act
@@ -206,7 +208,7 @@ class OrderGrpcServiceTest {
         doNothing().when(validator).validateOrderAmount(anyDouble());
         doNothing().when(validator).validateRequestId(anyString());
 
-        when(orderService.processOrderManual(any(OrderService.ProcessOrderRequest.class)))
+        when(orderService.processOrderManual(any(ProcessOrderRequest.class)))
                 .thenThrow(new RuntimeException("Database connection failed"));
 
         // Act
@@ -233,7 +235,7 @@ class OrderGrpcServiceTest {
         doNothing().when(validator).validateOrderAmount(anyDouble());
         doNothing().when(validator).validateRequestId(anyString());
 
-        OrderService.ProcessOrderResult resultWithNulls = OrderService.ProcessOrderResult.builder()
+        ProcessOrderResult resultWithNulls = ProcessOrderResult.builder()
                 .success(true)
                 .orderId(3)
                 .userId(1)
@@ -246,7 +248,7 @@ class OrderGrpcServiceTest {
                 .status("COMPLETED")
                 .build();
 
-        when(orderService.processOrderManual(any(OrderService.ProcessOrderRequest.class)))
+        when(orderService.processOrderManual(any(ProcessOrderRequest.class)))
                 .thenReturn(resultWithNulls);
 
         // Act

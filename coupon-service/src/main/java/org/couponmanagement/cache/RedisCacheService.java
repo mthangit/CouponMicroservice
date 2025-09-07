@@ -25,17 +25,14 @@ public class RedisCacheService {
 
     public <T> Optional<T> get(String key, Class<T> valueType) {
         try {
-            String fullKey = buildKey(key);
-            Object cached = redisTemplate.opsForValue().get(fullKey);
+            Object cached = redisTemplate.opsForValue().get(key);
 
             if (cached == null) {
                 missCount.incrementAndGet();
-                log.debug("Cache miss for key: {}", fullKey);
                 return Optional.empty();
             }
 
             hitCount.incrementAndGet();
-            log.debug("Cache hit for key: {}", fullKey);
 
             if (valueType.isInstance(cached)) {
                 return Optional.of(valueType.cast(cached));
@@ -57,15 +54,13 @@ public class RedisCacheService {
 
     public void put(String key, Object value, long ttlSeconds) {
         try {
-            String fullKey = buildKey(key);
 
             Object cacheValue = value;
             if (!(value instanceof String) && !(value instanceof Number) && !(value instanceof Boolean)) {
                 cacheValue = objectMapper.writeValueAsString(value);
             }
 
-            redisTemplate.opsForValue().set(fullKey, cacheValue, Duration.ofSeconds(ttlSeconds));
-            log.debug("Cached value for key: {} with TTL: {}s", fullKey, ttlSeconds);
+            redisTemplate.opsForValue().set(key, cacheValue, Duration.ofSeconds(ttlSeconds));
 
         } catch (JsonProcessingException e) {
             log.error("Error serializing value for cache key: {}", key, e);

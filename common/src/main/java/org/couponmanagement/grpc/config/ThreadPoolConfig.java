@@ -10,6 +10,7 @@ import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import io.micrometer.tracing.Tracer;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 
 @Configuration
@@ -17,13 +18,16 @@ import java.util.concurrent.ThreadPoolExecutor;
 @Slf4j
 public class ThreadPoolConfig {
 
-    @Value("${thread-pool.core-size:5}")
+    @Value("${thread-pool.use-virtual-threads:false}")
+    private boolean useVirtualThreads;
+
+    @Value("${thread-pool.core-size:50}")
     private int corePoolSize;
 
-    @Value("${thread-pool.max-size:10}")
+    @Value("${thread-pool.max-size:100}")
     private int maxPoolSize;
 
-    @Value("${thread-pool.queue-capacity:100}")
+    @Value("${thread-pool.queue-capacity:300}")
     private int queueCapacity;
 
     @Value("${thread-pool.keep-alive-seconds:60}")
@@ -35,7 +39,8 @@ public class ThreadPoolConfig {
     public ThreadPoolConfig(ContextSnapshotFactory contextSnapshotFactory, Tracer tracer) {
         this.contextSnapshotFactory = contextSnapshotFactory;
         this.tracer = tracer;
-        log.info("ThreadPoolConfig initialized with tracer: {}", tracer != null ? tracer.getClass().getSimpleName() : "NULL");
+        log.info("ThreadPoolConfig initialized with tracer: {}, virtualThreads: {}",
+                tracer != null ? tracer.getClass().getSimpleName() : "NULL", useVirtualThreads);
     }
 
     @Bean(name = "couponEvaluationExecutor")
@@ -48,21 +53,33 @@ public class ThreadPoolConfig {
         return createSharedEvaluationExecutor("RuleEval-");
     }
 
+    @Bean(name = "collectionRuleEvaluationExecutor")
+    public Executor collectionRuleEvaluationExecutor() {
+        return createSharedEvaluationExecutor("CollectionRuleEval-");
+    }
+
     private Executor createSharedEvaluationExecutor(String threadNamePrefix) {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(corePoolSize);
-        executor.setMaxPoolSize(maxPoolSize);
-        executor.setQueueCapacity(queueCapacity);
-        executor.setKeepAliveSeconds(keepAliveSeconds);
-        executor.setThreadNamePrefix(threadNamePrefix);
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
-        executor.setWaitForTasksToCompleteOnShutdown(true);
-        executor.setAwaitTerminationSeconds(20);
+        Executor executor;
 
-        executor.initialize();
+        if (useVirtualThreads) {
+            executor = Executors.newVirtualThreadPerTaskExecutor();
+            log.info("Virtual thread executor initialized: prefix={}", threadNamePrefix);
+        } else {
+            ThreadPoolTaskExecutor threadPoolExecutor = new ThreadPoolTaskExecutor();
+            threadPoolExecutor.setCorePoolSize(corePoolSize);
+            threadPoolExecutor.setMaxPoolSize(maxPoolSize);
+            threadPoolExecutor.setQueueCapacity(queueCapacity);
+            threadPoolExecutor.setKeepAliveSeconds(keepAliveSeconds);
+            threadPoolExecutor.setThreadNamePrefix(threadNamePrefix);
+            threadPoolExecutor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+            threadPoolExecutor.setWaitForTasksToCompleteOnShutdown(true);
+            threadPoolExecutor.setAwaitTerminationSeconds(20);
+            threadPoolExecutor.initialize();
 
-        log.info("Shared evaluation thread pool initialized: prefix={}, core={}, max={}, queue={}",
-                threadNamePrefix, corePoolSize, maxPoolSize, queueCapacity);
+            executor = threadPoolExecutor;
+            log.info("Platform thread pool initialized: prefix={}, core={}, max={}, queue={}",
+                    threadNamePrefix, corePoolSize, maxPoolSize, queueCapacity);
+        }
 
         return new TraceAwareExecutor(executor, contextSnapshotFactory, tracer, threadNamePrefix);
     }
@@ -88,10 +105,7 @@ public class ThreadPoolConfig {
                 try (ContextSnapshot.Scope scope = snapshot.setThreadLocals()) {
                     var span = tracer.nextSpan().name(threadNamePrefix + "async-task").start();
                     try (Tracer.SpanInScope ws = tracer.withSpan(span)) {
-                        log.debug("Starting async task with span: {} in thread: {}",
-                                span.context().spanId(), Thread.currentThread().getName());
                         command.run();
-                        log.debug("Completed async task with span: {}", span.context().spanId());
                     } catch (Exception e) {
                         span.error(e);
                         log.error("Error in async task with span: {}", span.context().spanId(), e);
@@ -104,4 +118,3 @@ public class ThreadPoolConfig {
         }
     }
 }
-

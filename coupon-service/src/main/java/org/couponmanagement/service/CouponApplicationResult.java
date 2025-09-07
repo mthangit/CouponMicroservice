@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.couponmanagement.entity.CouponUser;
+import org.couponmanagement.grpc.annotation.PerformanceMonitor;
 
 import java.math.BigDecimal;
 
@@ -18,6 +19,7 @@ public class CouponApplicationResult {
     private String couponCode;
     private BigDecimal discountAmount;
     private String errorMessage;
+    private String errorCode;
 
     public static CouponApplicationResult success(Integer couponId, String couponCode, BigDecimal discountAmount) {
         return CouponApplicationResult.builder()
@@ -28,16 +30,18 @@ public class CouponApplicationResult {
                 .build();
     }
 
-    public static CouponApplicationResult failure(String errorMessage) {
+    public static CouponApplicationResult failure(String errorMessage, String errorCode) {
         return CouponApplicationResult.builder()
                 .success(false)
                 .discountAmount(BigDecimal.ZERO)
                 .errorMessage(errorMessage)
+                .errorCode(errorCode)
                 .build();
     }
 
+    @PerformanceMonitor
     public static CouponApplicationResult buildResult(CouponUser couponUser, BigDecimal discountAmount,
-                                                      String errorMessage, boolean success) {
+                                                      String errorMessage, boolean success, String errorCode) {
         if (success && couponUser != null) {
             return CouponApplicationResult.builder()
                     .success(true)
@@ -53,6 +57,7 @@ public class CouponApplicationResult {
                                couponUser.getCoupon().getCode() : null)
                     .discountAmount(discountAmount != null ? discountAmount : BigDecimal.ZERO)
                     .errorMessage(errorMessage)
+                    .errorCode(errorCode)
                     .build();
         }
     }

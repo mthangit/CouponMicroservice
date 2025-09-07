@@ -30,12 +30,10 @@ public class RedisCacheService {
 
             if (cached == null) {
                 missCount.incrementAndGet();
-                log.debug("Cache miss for key: {}", fullKey);
                 return Optional.empty();
             }
 
             hitCount.incrementAndGet();
-            log.debug("Cache hit for key: {}", fullKey);
 
             if (valueType.isInstance(cached)) {
                 return Optional.of(valueType.cast(cached));
@@ -65,7 +63,6 @@ public class RedisCacheService {
             }
 
             redisTemplate.opsForValue().set(fullKey, cacheValue, Duration.ofSeconds(ttlSeconds));
-            log.debug("Cached value for key: {} with TTL: {}s", fullKey, ttlSeconds);
 
         } catch (JsonProcessingException e) {
             log.error("Error serializing value for cache key: {}", key, e);

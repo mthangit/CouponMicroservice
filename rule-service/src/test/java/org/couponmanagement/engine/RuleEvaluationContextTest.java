@@ -22,8 +22,7 @@ class RuleEvaluationContextTest {
                 orderAmount,
                 currentTime,
                 userId,
-                orderDate,
-                discountAmount
+                orderDate
         );
 
         // Assert
@@ -31,7 +30,6 @@ class RuleEvaluationContextTest {
         assertEquals(currentTime, context.getCurrentTime());
         assertEquals(userId, context.getUserId());
         assertEquals(orderDate, context.getOrderDate());
-        assertEquals(discountAmount, context.getDiscountAmount());
     }
 
     @Test
@@ -48,7 +46,6 @@ class RuleEvaluationContextTest {
         assertEquals(currentTime, context.getCurrentTime());
         assertNull(context.getUserId());
         assertNull(context.getOrderDate());
-        assertNull(context.getDiscountAmount());
     }
 
     @Test
@@ -66,7 +63,6 @@ class RuleEvaluationContextTest {
         assertEquals(currentTime, context.getCurrentTime());
         assertEquals(userId, context.getUserId());
         assertNull(context.getOrderDate());
-        assertNull(context.getDiscountAmount());
     }
 
     @Test
@@ -82,8 +78,7 @@ class RuleEvaluationContextTest {
                 orderAmount,
                 currentTime,
                 userId,
-                orderDate,
-                discountAmount
+                orderDate
         );
 
         // Act & Assert
@@ -91,7 +86,6 @@ class RuleEvaluationContextTest {
         assertEquals(LocalDateTime.of(2025, 7, 27, 14, 30), context.getCurrentTime());
         assertEquals(456, context.getUserId());
         assertEquals("2025-07-27T14:30:00", context.getOrderDate());
-        assertEquals(15.0, context.getDiscountAmount());
     }
 
     @Test
@@ -101,8 +95,7 @@ class RuleEvaluationContextTest {
                 null, // null orderAmount
                 null, // null currentTime
                 null, // null userId
-                null, // null orderDate
-                null  // null discountAmount
+                null // null orderDate
         );
 
         // Assert
@@ -110,7 +103,6 @@ class RuleEvaluationContextTest {
         assertNull(context.getCurrentTime());
         assertNull(context.getUserId());
         assertNull(context.getOrderDate());
-        assertNull(context.getDiscountAmount());
     }
 
     @Test
@@ -127,8 +119,7 @@ class RuleEvaluationContextTest {
                 orderAmount,
                 currentTime,
                 userId,
-                orderDate,
-                discountAmount
+                orderDate
         );
 
         // Assert
@@ -136,7 +127,6 @@ class RuleEvaluationContextTest {
         assertEquals(currentTime, context.getCurrentTime());
         assertEquals(0, context.getUserId());
         assertEquals("", context.getOrderDate());
-        assertEquals(0.0, context.getDiscountAmount());
     }
 
     @Test
@@ -146,8 +136,7 @@ class RuleEvaluationContextTest {
                 100.0,
                 LocalDateTime.of(2025, 7, 27, 12, 0),
                 123,
-                "2025-07-27T12:00:00",
-                10.0
+                "2025-07-27T12:00:00"
         );
 
         // Act
@@ -166,15 +155,15 @@ class RuleEvaluationContextTest {
         LocalDateTime now = LocalDateTime.now();
 
         RuleEvaluationContext context1 = new RuleEvaluationContext(
-                100.0, now, 123, "2025-07-27", 10.0
+                100.0, now, 123, "2025-07-27"
         );
 
         RuleEvaluationContext context2 = new RuleEvaluationContext(
-                100.0, now, 123, "2025-07-27", 10.0
+                100.0, now, 123, "2025-07-27"
         );
 
         RuleEvaluationContext context3 = new RuleEvaluationContext(
-                200.0, now, 123, "2025-07-27", 10.0
+                200.0, now, 123, "2025-07-27"
         );
 
         // Assert

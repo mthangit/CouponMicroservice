@@ -30,7 +30,7 @@ public class CouponCacheProperties{
     private long couponDetailedTtlSeconds = 172800;
 
     @Min(1)
-    private long couponDetailTtlSeconds = 172800;
+    private long couponDetailTtlSeconds = 60 * 60 * 24 * 7; // 1 day
 
     public String getCouponInfoKey(String couponCode) {
         return "coupon:info:" + couponCode;

@@ -35,7 +35,6 @@ class CouponApplicationResultTest {
                 .discountAmount(BigDecimal.ZERO)
                 .build();
 
-        // Assert
         assertFalse(result.isSuccess());
         assertEquals("Coupon not found", result.getErrorMessage());
         assertEquals(BigDecimal.ZERO, result.getDiscountAmount());
@@ -45,7 +44,6 @@ class CouponApplicationResultTest {
 
     @Test
     void couponApplicationResultEqualsAndHashCode() {
-        // Arrange
         CouponApplicationResult result1 = CouponApplicationResult.builder()
                 .success(true)
                 .couponId(123)
@@ -66,7 +64,6 @@ class CouponApplicationResultTest {
                 .discountAmount(BigDecimal.ZERO)
                 .build();
 
-        // Assert
         assertEquals(result1, result2);
         assertEquals(result1.hashCode(), result2.hashCode());
         assertNotEquals(result1, result3);
@@ -75,7 +72,6 @@ class CouponApplicationResultTest {
 
     @Test
     void couponApplicationResultToString() {
-        // Arrange
         CouponApplicationResult result = CouponApplicationResult.builder()
                 .success(true)
                 .couponId(123)
@@ -83,10 +79,8 @@ class CouponApplicationResultTest {
                 .discountAmount(BigDecimal.valueOf(10.0))
                 .build();
 
-        // Act
         String toString = result.toString();
 
-        // Assert
         assertTrue(toString.contains("CouponApplicationResult"));
         assertTrue(toString.contains("success=true"));
         assertTrue(toString.contains("couponId=123"));
@@ -96,17 +90,14 @@ class CouponApplicationResultTest {
 
     @Test
     void couponApplicationResultSetters() {
-        // Arrange
         CouponApplicationResult result = new CouponApplicationResult();
 
-        // Act
         result.setSuccess(true);
         result.setCouponId(456);
         result.setCouponCode("SAVE20");
         result.setDiscountAmount(BigDecimal.valueOf(20.0));
         result.setErrorMessage(null);
 
-        // Assert
         assertTrue(result.isSuccess());
         assertEquals(456, result.getCouponId());
         assertEquals("SAVE20", result.getCouponCode());

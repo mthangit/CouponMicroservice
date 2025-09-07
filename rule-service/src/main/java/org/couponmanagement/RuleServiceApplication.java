@@ -6,6 +6,7 @@ import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.data.redis.repository.configuration.EnableRedisRepositories;
+import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 @SpringBootApplication(scanBasePackages = {
@@ -13,12 +14,14 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
     "org.couponmanagement.grpc.config",
     "org.couponmanagement.grpc.interceptor",
     "org.couponmanagement.grpc.headers",
-    "org.couponmanagement.grpc.auth"
+    "org.couponmanagement.grpc.auth",
+    "org.couponmanagement.performance"
 })
 @EnableJpaRepositories(basePackages = "org.couponmanagement.repository")
 @EnableRedisRepositories
 @EnableAspectJAutoProxy
 @EnableTransactionManagement
+@EnableAsync
 public class RuleServiceApplication {
 
     public static void main(String[] args) {

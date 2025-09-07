@@ -20,6 +20,7 @@ public class CouponDetail {
     private String type;
     private String status;
     private Integer collectionKeyId;
+    private Integer budgetId;
     private String discountConfigJson;
     private boolean isActive;
     private LocalDateTime createdAt;
@@ -36,6 +37,7 @@ public class CouponDetail {
                 .type(coupon.getDiscountType())
                 .status(coupon.getIsActive() ? "ACTIVE" : "INACTIVE")
                 .collectionKeyId(coupon.getCollectionKeyId())
+                .budgetId(coupon.getBudgetId())
                 .discountConfigJson(coupon.getDiscountConfigJson())
                 .isActive(coupon.getIsActive())
                 .createdAt(coupon.getCreatedAt())

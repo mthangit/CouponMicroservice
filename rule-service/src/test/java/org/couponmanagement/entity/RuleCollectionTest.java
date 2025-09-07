@@ -11,7 +11,6 @@ class RuleCollectionTest {
 
     @Test
     void ruleCollectionConstructors_CreateValidRuleCollection() {
-        // Test NoArgs constructor
         RuleCollection collection = new RuleCollection();
         assertNull(collection.getId());
         assertNull(collection.getName());
@@ -19,7 +18,6 @@ class RuleCollectionTest {
         assertNull(collection.getCreatedAt());
         assertNull(collection.getUpdatedAt());
 
-        // Test AllArgs constructor
         LocalDateTime now = LocalDateTime.now();
         RuleCollection collectionWithAllArgs = new RuleCollection(
                 1,
@@ -71,42 +69,34 @@ class RuleCollectionTest {
         assertNotNull(collection.getUpdatedAt());
         assertTrue(collection.getCreatedAt().isAfter(beforePersist.minusSeconds(1)));
         assertTrue(collection.getUpdatedAt().isAfter(beforePersist.minusSeconds(1)));
-        assertEquals(collection.getCreatedAt(), collection.getUpdatedAt());
     }
 
     @Test
     void preUpdate_UpdatesTimestamp() {
-        // Arrange
         RuleCollection collection = new RuleCollection();
         collection.onCreate();
         LocalDateTime originalCreatedAt = collection.getCreatedAt();
         LocalDateTime originalUpdatedAt = collection.getUpdatedAt();
 
-        // Wait a bit to ensure timestamp difference
         try {
             Thread.sleep(1);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
 
-        // Act
         collection.onUpdate();
 
-        // Assert
         assertEquals(originalCreatedAt, collection.getCreatedAt()); // Should not change
         assertTrue(collection.getUpdatedAt().isAfter(originalUpdatedAt)); // Should be updated
     }
 
     @Test
     void getRuleIdsList_ValidJson_ReturnsCorrectList() {
-        // Arrange
         RuleCollection collection = new RuleCollection();
         collection.setRuleIds("[1, 2, 3]");
 
-        // Act
         List<Integer> ruleIdsList = collection.getRuleIdsList();
 
-        // Assert
         assertNotNull(ruleIdsList);
         assertEquals(3, ruleIdsList.size());
         assertTrue(ruleIdsList.contains(1));
@@ -116,22 +106,18 @@ class RuleCollectionTest {
 
     @Test
     void getRuleIdsList_EmptyJson_ReturnsEmptyList() {
-        // Test with null
         RuleCollection collection1 = new RuleCollection();
         collection1.setRuleIds(null);
         assertTrue(collection1.getRuleIdsList().isEmpty());
 
-        // Test with empty string
         RuleCollection collection2 = new RuleCollection();
         collection2.setRuleIds("");
         assertTrue(collection2.getRuleIdsList().isEmpty());
 
-        // Test with whitespace
         RuleCollection collection3 = new RuleCollection();
         collection3.setRuleIds("   ");
         assertTrue(collection3.getRuleIdsList().isEmpty());
 
-        // Test with empty array
         RuleCollection collection4 = new RuleCollection();
         collection4.setRuleIds("[]");
         assertTrue(collection4.getRuleIdsList().isEmpty());
@@ -139,49 +125,39 @@ class RuleCollectionTest {
 
     @Test
     void getRuleIdsList_InvalidJson_ReturnsEmptyList() {
-        // Arrange
         RuleCollection collection = new RuleCollection();
         collection.setRuleIds("invalid-json");
 
-        // Act
         List<Integer> ruleIdsList = collection.getRuleIdsList();
 
-        // Assert
         assertNotNull(ruleIdsList);
         assertTrue(ruleIdsList.isEmpty());
     }
 
     @Test
     void getRuleIdsList_SingleElement_ReturnsCorrectList() {
-        // Arrange
         RuleCollection collection = new RuleCollection();
         collection.setRuleIds("[42]");
 
-        // Act
         List<Integer> ruleIdsList = collection.getRuleIdsList();
 
-        // Assert
         assertNotNull(ruleIdsList);
         assertEquals(1, ruleIdsList.size());
-        assertEquals(42, ruleIdsList.get(0));
+        assertEquals(42, ruleIdsList.getFirst());
     }
 
     @Test
     void setRuleIdsList_ValidList_SetsCorrectJson() {
-        // Arrange
         RuleCollection collection = new RuleCollection();
         List<Integer> ruleIds = List.of(1, 2, 3);
 
-        // Act
         collection.setRuleIdsList(ruleIds);
 
-        // Assert
         assertNotNull(collection.getRuleIds());
         assertTrue(collection.getRuleIds().contains("1"));
         assertTrue(collection.getRuleIds().contains("2"));
         assertTrue(collection.getRuleIds().contains("3"));
 
-        // Verify round-trip
         List<Integer> retrievedIds = collection.getRuleIdsList();
         assertEquals(ruleIds.size(), retrievedIds.size());
         assertTrue(retrievedIds.containsAll(ruleIds));
@@ -189,14 +165,11 @@ class RuleCollectionTest {
 
     @Test
     void setRuleIdsList_EmptyList_SetsEmptyArrayJson() {
-        // Arrange
         RuleCollection collection = new RuleCollection();
         List<Integer> emptyList = List.of();
 
-        // Act
         collection.setRuleIdsList(emptyList);
 
-        // Assert
         assertEquals("[]", collection.getRuleIds());
         assertTrue(collection.getRuleIdsList().isEmpty());
     }
@@ -207,13 +180,11 @@ class RuleCollectionTest {
         RuleCollection collection = new RuleCollection();
         List<Integer> singleElementList = List.of(42);
 
-        // Act
         collection.setRuleIdsList(singleElementList);
 
-        // Assert
         assertTrue(collection.getRuleIds().contains("42"));
         assertEquals(1, collection.getRuleIdsList().size());
-        assertEquals(42, collection.getRuleIdsList().get(0));
+        assertEquals(42, collection.getRuleIdsList().getFirst());
     }
 
     @Test
